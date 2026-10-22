@@ -1,0 +1,31 @@
+# Байт-код Python
+__pycache__/
+*.py[oc]
+
+# Виртуальное окружение
+.venv/
+
+# Секрет
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# Артефакты сборки
+build/
+dist/
+wheels/
+*.egg
+*.egg-info
+
+# Локальные данные
+data/
+logs/
+
+# Артифакт asciinema
+*.cast
+
+
+
+
