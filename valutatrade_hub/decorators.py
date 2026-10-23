@@ -138,8 +138,7 @@ def session_check(func: Callable):
     return wrapper
 
 
-def validate_command(command_name: str,
-                     command_signature: dict) -> Callable:
+def validate_command(command_name: str) -> Callable:
     """
     Декоратор валидации.
     Проверяет команды на корректность
