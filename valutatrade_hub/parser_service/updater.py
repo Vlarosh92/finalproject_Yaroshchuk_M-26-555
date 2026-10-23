@@ -1,5 +1,5 @@
 from valutatrade_hub.core.utils import data_time_comprehension
-from valutatrade_hub.infra.databese import DataBaseManager
+from valutatrade_hub.infra.database import DataBaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.parser_service.api_clients import BaseApiClient
 from valutatrade_hub.parser_service.storage import ApiStorageClass

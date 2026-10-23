@@ -33,8 +33,16 @@
         "show-portfolio": {
             "--base":     {"exist": false, "type": "str",
                           "currency_code_validation": ["USD", "EUR", "BTC", "RUB","ETH"]}},
-
+        "show-rates": {
+            "--currency": {"exist": false, "type": "str",
+                          "currency_code_validation":["USD", "EUR", "BTC", "RUB","ETH"]},
+            "--top":      {"exist": false, "type": "int"},
+            "--base":     {"exist": false, "type": "str",
+                          "currency_code_validation":["USD", "EUR", "BTC", "RUB","ETH"]}},
+        "update-rates": {
+            "--source":   {"exist": false, "type": "str"}},
         "change-password": {
-            "--password": {"exist": true, "min_len": 4, "type": "str"}}
+            "--password": {"exist": true, "min_len": 4, "type": "str"}},
+        "scheduler-run": {}
       }
 }

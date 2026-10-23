@@ -5,6 +5,8 @@ from prettytable import PrettyTable
 
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.usecases import (
+    build_rates_updater,
+    show_rates_fun,
     portfolio_fun,
     get_rate,
     buy,
@@ -17,8 +19,7 @@ from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.decorators import (
     session_check,
     validate_command,
-    handle_errors,
-    log_action)
+    handle_errors)
 
 from valutatrade_hub.core.exceptions import (
     ValidationException,
@@ -27,7 +28,8 @@ from valutatrade_hub.core.exceptions import (
     SpaceConsoleParserException,
     UnknownCommandConsoleParserException,
     ConsoleParserException)
-from valutatrade_hub.logging_config import setup_logger
+from valutatrade_hub.logging_config import enable_console_logging, setup_logger
+from valutatrade_hub.parser_service.shceduler import Scheduler
 
 
 # ==================================================================================
@@ -43,6 +45,7 @@ def run() -> None:
     if not commands_signature:
         print("config.json не найден или повреждён.")
         return None
+    scheduler = Scheduler(interval_seconds=sl.get("rates_ttl_seconds"))
     # настройка логгера
     session_manager = SessionManager()
     setup_logger(log_dir = sl.get(key='log_path'),
@@ -68,7 +71,7 @@ def run() -> None:
             cli_args = parsing_console_data
             # ключи служебных атрибутов в формате "_*"
             cli_args["_session"] = session_manager
-
+            cli_args["_scheduler"] = scheduler
             cli_return = get_cli_fun(command_name)(**cli_args)
             if not cli_return:
                 break
@@ -140,7 +143,30 @@ class SessionManager:
 # Тоже можно было бы перенести в отдельный модуль в cli
 class FormattedOutput:
     """Класс для определения формата текстового вывода для разных команд"""
+    @staticmethod
+    def show_rates_output_format(input_data: tuple) -> str:
+        """
+        Формируем строку вывода для команды show-rates.
+        В выводе используем pretty_table.
+        """
+        pretty_table = PrettyTable()
+        # выравниваем таблицу
+        pretty_table.field_names = ["Валюта",
+                                    "Курс",
+                                    "updated at"]
+        pretty_table.align["Валюта"] = "l"
+        pretty_table.align["Курс"] = "l"
+        pretty_table.align["updated at "] = "l"
+        output_str = f"Rates from cache:\n"
 
+        for idata in input_data:
+            pretty_table.add_row([
+                ("- " + idata[0]),
+                dynamic_round(value = idata[1], num_digits = 2),
+                f"{idata[2]}"
+                ])
+        output_str += pretty_table.get_string()
+        return output_str
 
     @staticmethod
     def register_output_format(_password: str = "",
@@ -336,7 +362,9 @@ def parse_input_str(command_name: str,
 def cli_exit_fun(**k_cli) -> bool:
     """Функция выхода из программы"""
     k_cli.get('_session').exit_session()
-
+    scheduler = k_cli["_scheduler"]
+    if scheduler.running:
+        scheduler.stop()
     return False
 @handle_errors
 def cli_help_fun(**k_cli) -> str:
@@ -396,7 +424,6 @@ def cli_show_portfolio_fun(**k_cli) -> str:
 def cli_buy_fun(**k_cli) -> str:
     """Функция обработки команды на покупку"""
     session_manager = k_cli.get('_session')
-    _currency = k_cli['--currency']
     _amount = k_cli['--amount']
     _currency = get_currency(code = k_cli.get('--currency'))
     use_case_ret = buy(user_id = session_manager.session_id,
@@ -414,7 +441,6 @@ def cli_buy_fun(**k_cli) -> str:
 def cli_sell_fun(**k_cli) ->str:
     """Функция обработки команды на продажу"""
     session_manager = k_cli.get('_session')
-    _currency = k_cli['--currency']
     _amount = k_cli['--amount']
     _currency = get_currency(code=k_cli.get('--currency'))
     use_case_ret = sell(user_id=session_manager.session_id,
@@ -430,9 +456,6 @@ def cli_sell_fun(**k_cli) ->str:
 @validate_command("get-rate")
 def cli_get_rates(**k_cli) -> str:
     """Функция обработки команды на показ курса валют"""
-
-    curr_from = k_cli['--from']
-    curr_to = k_cli['--to']
     curr_from = get_currency(code=k_cli.get('--from'))
     curr_to = get_currency(code=k_cli.get('--to'))
     exc_rate, last_refresh = get_rate(
@@ -445,6 +468,48 @@ def cli_get_rates(**k_cli) -> str:
              last_refresh = last_refresh)
 
 @handle_errors
+@validate_command("show-rates")
+def cli_show_rates(**k_cli) -> str:
+    """
+    Обрабатываем запрос на показ курса валют
+    по фильтру, либо топ криптовалют, либо
+    указанную в --currency, опционально показываем
+    в валюте указанной в --base
+    """
+    converted_code = get_currency(code = sl.get(key="base_currency"))
+    if k_cli.get("--base"):
+        converted_code = get_currency(code = k_cli["--base"])
+    if k_cli.get("--currency"):
+        _curr_code = get_currency(code = k_cli["--currency"])
+        result = show_rates_fun(filtered_key = "currency",
+                                curr_code = _curr_code.code,
+                                convert_code = converted_code.code)
+    elif '--top' in k_cli:
+
+        result = show_rates_fun(filtered_key="top",
+                                top_n = k_cli["--top"],
+                                convert_code=converted_code.code)
+    else:
+        result = show_rates_fun(convert_code=converted_code.code)
+
+
+    return FormattedOutput().show_rates_output_format(result)
+
+@handle_errors
+@validate_command("update-rates")
+def cli_update_rates(**k_cli) -> str:
+    """
+    Вызов функции обновления курсов валют
+    опционально из одного источника --source
+    """
+    updater = build_rates_updater(source = k_cli.get("--source"))
+
+    # Логгер временно пишет в консоль только внутри with.
+    # После выхода handler удаляется, логи идут только в файл.
+    with enable_console_logging("logger_1"):
+        return updater.run_update()
+
+@handle_errors
 @session_check
 @validate_command("change-password")
 def cli_change_password(**k_cli) -> str:
@@ -452,6 +517,16 @@ def cli_change_password(**k_cli) -> str:
     change_password(k_cli.get("--password"), k_cli.get('_session').session_id)
     return f"Пароль успешно изменен."
 
+@handle_errors
+@validate_command("scheduler-run")
+def cli_scheduler_run(**k_cli) -> str:
+    """Запуск фонового обновления валют"""
+
+    updater = build_rates_updater(source=k_cli.get("--source"))
+    scheduler = k_cli.get("_scheduler")
+    scheduler.updater = updater.run_update
+    scheduler.start()
+    return f"Запущено фоновое обновление курсов валют"
 
 # ==================================================================================
 # Словарь консольных функции
@@ -464,7 +539,10 @@ CLI_FUN = {
     "buy" : cli_buy_fun,
     "sell" : cli_sell_fun,
     "get-rate" : cli_get_rates,
+    "show-rates": cli_show_rates,
+    "update-rates": cli_update_rates,
     "change-password": cli_change_password,
+    "scheduler-run": cli_scheduler_run,
     "help": cli_help_fun
 }
 

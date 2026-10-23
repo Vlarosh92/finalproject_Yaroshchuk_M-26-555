@@ -1,4 +1,4 @@
-from valutatrade_hub.infra.databese import DataBaseManager
+from valutatrade_hub.infra.database import DataBaseManager
 
 
 

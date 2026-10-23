@@ -30,7 +30,7 @@ from valutatrade_hub.core.exceptions import (
 from valutatrade_hub.parser_service.updater import RatesUpdater
 from valutatrade_hub.parser_service.api_clients import ExchangeRateApiClient, CoinGeckoClient
 from valutatrade_hub.parser_service.storage import ApiStorageClass
-
+from valutatrade_hub.parser_service.config import ParserConfig
 
 def convert_currency(curr_code_base: str,
                      curr_code_convert: str,
@@ -70,18 +70,13 @@ def portfolio_fun(user_id: int,
     dbm = DataBaseManager()
     user_data = dbm.get_user(user_id = str(user_id))
 
-    # переводим строку в формат datatime
-    user_data["registration_date"] = datetime.strptime(
-    user_data["registration_date"],
-    "%Y-%m-%dT%H:%M:%S")
-
     portfolio_data = dbm.get_portfolios(user_id=str(user_id))
 
     wallets_dict = {}
     for code, data in portfolio_data.get("wallets").items():
         _wallet = Wallet(
             currency_code = code,
-            **data
+            balance = data.get("balance")
         )
         wallets_dict[code] = _wallet
     portfolio_data["wallets"] = wallets_dict
@@ -130,19 +125,15 @@ def login_account(username: str,
     dbm = DataBaseManager()
     all_user = dbm.get_user()
 
-    data_user = None
+    data_user = False
+
     for us in all_user:
         if us.get('username') == username:
             data_user = us
 
     # если в бд не нашлось пользователя с таким именем
-    if data_user is not None:
-        raise UserAuthentificationException
-
-    # переводим строку в формат datatime
-    data_user["registration_date"] = datetime.strptime(
-        data_user["registration_date"],
-        "%Y-%m-%dT%H:%M:%S")
+    if not data_user:
+        raise UserAuthentificationException(field = username)
 
     # информация для логгирования
     log_mass = ""
@@ -158,12 +149,8 @@ def change_password(password: str,
 
 
     dbm = DataBaseManager()
-    dbm.get_user(user_id = str(user_id))
+    data_user = dbm.get_user(user_id = str(user_id))
 
-    # переводим строку в формат datatime
-    data_user["registration_date"] = datetime.strptime(
-        data_user["registration_date"],
-        "%Y-%m-%dT%H:%M:%S")
 
     _user = Users(**data_user)
     _user.change_password(password)
@@ -173,7 +160,7 @@ def change_password(password: str,
         if du["user_id"] == _user.user_id:
             du['hashed_password'] = _user.hashed_password
             break
-    dbm.save_user(new_data=users_data)
+    dbm.save_user(new_data=users_data, full_save = True)
 
 @log_action("REGISTER")
 def register_new_account(username: str,
@@ -190,10 +177,7 @@ def register_new_account(username: str,
     if username in user_name_list:
         raise UserExistAuthentificationException(field = username)
 
-
-    # Загружаем данные из portfolios.json
     data_portfolios = dbm.get_portfolios()
-
     # Формируем новый id через автоинкремент
     max_id = max([d["user_id"] for d in data_user], default = 0) + 1
     # Формируем пароль
@@ -205,6 +189,7 @@ def register_new_account(username: str,
                  hashed_password = hashed_password,
                  registration_date = datetime.now()
     )
+
     new_users_data = [*data_user, {
         'user_id': user.user_id,
         'username': user.username,
@@ -214,8 +199,8 @@ def register_new_account(username: str,
     new_portfolio_data = [*data_portfolios, {"user_id": max_id, "wallets": {}}]
 
     # Сохраняем данные
-    dbm.save_user(new_data = new_users_data)
-    dbm.save_portfolios(new_data=new_portfolio_data)
+    dbm.save_user(new_data = new_users_data, full_save = True)
+    dbm.save_portfolios(new_data = new_portfolio_data, full_save = True)
 
     # информация для логгирования
     log_mass = ""
@@ -367,7 +352,7 @@ def trade_operation(user_id: int,
         wallets_data[key] = {"balance" : wallet.balance}
     # сохраняем портфель
     portfolios_data[id_index] = {"user_id": user_id, "wallets": wallets_data}
-    dbm.save_portfolios(new_data = portfolios_data)
+    dbm.save_portfolios(new_data = portfolios_data, full_save = True)
 
 
     # очищаем кеш
@@ -375,9 +360,7 @@ def trade_operation(user_id: int,
     show_rates_fun.clear()
     # информация для логирования
     log_mass = ""
-    user_data = load_data_from("users",
-                               tag="user_id",
-                               tag_name=str(user_id))
+    user_data = dbm.get_user(user_id = str(user_id))
     log_mass += f"user=\'{user_data.get('username')}\' "
     log_mass += f"currency='{curr_code}' "
     log_mass += f"amount='{amount}' "
