@@ -1,7 +1,6 @@
 from datetime import datetime
 
-from valutatrade_hub.parser_service.config import ParserConfig
-from valutatrade_hub.infra.databese import DataBaseManager
+
 from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.core.models import (
     Users,
@@ -13,20 +12,9 @@ from valutatrade_hub.core.utils import (
     save_data_in,
     password_creator,
     curr_code_union,
-    data_time_comprehension,
     ensure_rates_if_missing
 )
-from valutatrade_hub.decorators import log_action, memoize
-from valutatrade_hub.core.currencies import get_currency
-from valutatrade_hub.core.exceptions import (
-    CurrencyNotFoundError,
-    RatesExistValidationException,
-    UserAuthentificationException,
-    UserExistAuthentificationException,
-    WalletsException,
-    PasswordAuthentificationException,
-    PortfolioDontFindException
-)
+
 
 
 def convert_currency(curr_code_base: str,
@@ -36,8 +24,10 @@ def convert_currency(curr_code_base: str,
     Функция конвертации курса базовой валюты
     к курсу конвертационной валюты
     """
-    dbm = DataBaseManager()
-    base_sys_code = SettingsLoader().get(key="base_currency")
+    data = load_data_from(
+                file_name="rates"
+                )
+    base_sys_code = "USD"
 
     # проверяем если первая валюта является базовой приравниваем её курс к 1
     # иначе составляем пару и ищем в локальном кеше rates.json
@@ -45,7 +35,7 @@ def convert_currency(curr_code_base: str,
         rate_base = 1
     else:
         rate_base_code = curr_code_union(curr_code_base, base_sys_code)
-        rate_base = dbm.get_rates()["pairs"][rate_base_code]['rate']
+        rate_base = data["pairs"][rate_base_code]['rate']
 
     # проверяем если вторая валюта является базовой приравниваем её курс к 1
     # иначе составляем пару и ищем в локальном кеше rates.json
@@ -56,7 +46,7 @@ def convert_currency(curr_code_base: str,
         rate_conv = dbm.get_rates()["pairs"][rate_conv_code]['rate']
 
     return rate_base / rate_conv
-@memoize
+
 def portfolio_fun(user_id: int,
                        curr_base_code: str) -> tuple:
     """
@@ -64,15 +54,22 @@ def portfolio_fun(user_id: int,
     Возращает коды валют их баланс и
     сумма в пересчете к базовой валюте
     """
-    dbm = DataBaseManager()
-    user_data = dbm.get_user(user_id = str(user_id))
 
+    user_data = load_data_from(
+                file_name="users",
+                tag="user_id",
+                tag_name=str(user_id)
+                )
     # переводим строку в формат datatime
     user_data["registration_date"] = datetime.strptime(
     user_data["registration_date"],
     "%Y-%m-%dT%H:%M:%S")
 
-    portfolio_data = dbm.get_portfolios(user_id=str(user_id))
+    portfolio_data = load_data_from(
+            file_name="portfolios",
+            tag="user_id",
+            tag_name=str(user_id)
+            )
 
     wallets_dict = {}
     for code, data in portfolio_data.get("wallets").items():
@@ -90,9 +87,9 @@ def portfolio_fun(user_id: int,
 
     actual_wallets = curr_portfolio.wallets
     if not actual_wallets:
-        raise WalletsException(message = "Отсутствуют кошельки в портфеле")
+        raise Exception()
 
-    exchange_rates = dbm.get_rates()
+    exchange_rates = load_data_from("rates")
     # если данные отсутствуют ставим заглушку
     if not exchange_rates:
         ensure_rates_if_missing()
@@ -123,39 +120,29 @@ def portfolio_fun(user_id: int,
 def login_account(username: str,
                   password: str) -> dict:
     """Проверяем соответствие пароля пользователю"""
-
-    dbm = DataBaseManager()
-    all_user = dbm.get_user()
-
-    data_user = None
-    for us in all_user:
-        if us.get('username') == username:
-            data_user = us
+    data_user = load_data_from(file_name="users",
+                               tag="username",
+                               tag_name=username)
 
     # если в бд не нашлось пользователя с таким именем
-    if data_user is not None:
-        raise UserAuthentificationException
+    if not data_user:
+        raise Exception
+        # переводим строку в формат datatime
 
-    # переводим строку в формат datatime
     data_user["registration_date"] = datetime.strptime(
         data_user["registration_date"],
         "%Y-%m-%dT%H:%M:%S")
 
-    # информация для логгирования
-    log_mass = ""
-    log_mass += f"username: {username} "
     if not Users(**data_user).verify_password(password):
         raise PasswordAuthentificationException
-    return {"result": data_user.get("user_id"),
-            "log_info": log_mass}
+    return {"result": data_user.get("user_id")}
 
 def change_password(password: str,
                     user_id: int) -> None:
     """Функция смены пароля пользователя"""
-
-
-    dbm = DataBaseManager()
-    dbm.get_user(user_id = str(user_id))
+    data_user = load_data_from(file_name="users",
+                               tag="user_id",
+                               tag_name=str(user_id))
 
     # переводим строку в формат datatime
     data_user["registration_date"] = datetime.strptime(
@@ -165,12 +152,15 @@ def change_password(password: str,
     _user = Users(**data_user)
     _user.change_password(password)
 
-    users_data = dbm.get_user()
+    users_data = load_data_from(file_name="users")
     for du in users_data:
+
         if du["user_id"] == _user.user_id:
             du['hashed_password'] = _user.hashed_password
             break
-    dbm.save_user(new_data=users_data)
+
+    save_data_in(file_name='users',
+                 input_data=users_data)
 
 @log_action("REGISTER")
 def register_new_account(username: str,
@@ -178,18 +168,16 @@ def register_new_account(username: str,
     """Функция регистрации нового аккаунта"""
     # Загружаем данные из users.json
     # Если файла нет отдаем пустой список
-    dbm = DataBaseManager()
-
-    data_user = dbm.get_user()
+    data_user = load_data_from("users")
     user_name_list = [du['username'] for du in data_user]
 
     # Если уже зарегистрирован такой пользователь
     if username in user_name_list:
-        raise UserExistAuthentificationException(field = username)
+        raise Exception()
 
 
     # Загружаем данные из portfolios.json
-    data_portfolios = dbm.get_portfolios()
+    data_portfolios = load_data_from("portfolios")
 
     # Формируем новый id через автоинкремент
     max_id = max([d["user_id"] for d in data_user], default = 0) + 1
@@ -211,37 +199,29 @@ def register_new_account(username: str,
     new_portfolio_data = [*data_portfolios, {"user_id": max_id, "wallets": {}}]
 
     # Сохраняем данные
-    dbm.save_user(new_data = new_users_data)
-    dbm.save_portfolios(new_data=new_portfolio_data)
+    save_data_in(file_name='users',
+                 input_data=new_users_data)
+    save_data_in(file_name="portfolios",
+                 input_data=new_portfolio_data)
 
-    # информация для логгирования
-    log_mass = ""
-    log_mass += f"username: {user.username} "
-    log_mass += f"user_id: {user.user_id} "
-    log_mass += (f"registration_date: "
-                 f"{user.registration_date.strftime("%Y-%m-%dT%H:%M:%S")} ")
-
-    return {"result":max_id, "log_info":log_mass}
+    return {"result":max_id}
 def get_rate(curr_from: str,
              curr_to: str
              ) -> tuple:
     """
-    Функция получения курса валют.
-    Проверяет последнее время обновления,
-    при устаревании данных обновляет.
+    Функция получения курса валют
     """
-    sl = SettingsLoader()
-    dbm = DataBaseManager()
-    # получаем множество допустимых валют из config.json
-    currency_code_set = set(sl.get(key="supported_currency"))
 
-    # получаем базовую системную валюту из config.json
-    base_val_code = sl.get(key="base_currency")
+    # множество допустимых валют
+    currency_code_set = ["USD", "EUR", "BTC", "RUB","ETH"]
+
+    base_val_code = "USD"
 
     # загружаем данные по курсам и время последнего обновления
-    exc_rates = dbm.get_rates()
-    rates = exc_rates.get('pairs')
-    last_refresh = exc_rates.get('last_refresh')
+    exc_rates = load_data_from("rates")
+    # если данные отсутствуют ставим заглушку
+    if not exc_rates:
+        ensure_rates_if_missing()
 
     # валидируем данные вводимых валют к допустимым
     if curr_from not in currency_code_set:
@@ -249,48 +229,12 @@ def get_rate(curr_from: str,
     if curr_to not in currency_code_set:
         CurrencyNotFoundError(field = curr_to)
 
-    # проверяем время последнего обновления валют
-    # при вводе базовой валюты берет для сравнения last_refresh
-    if curr_from !=base_val_code:
-        rates_updated_at_from = rates.get(
-            curr_code_union(curr_from, base_val_code)
-        ).get('updated_at', False)
-        if not rates_updated_at_from:
-            raise RatesExistValidationException(
-                field_currency_1= curr_from,
-                field_currency_2= curr_to
-            )
-    else:
-        rates_updated_at_from = last_refresh
-    if curr_to != base_val_code:
-        rates_updated_at_to = rates.get(
-            curr_code_union(curr_to, base_val_code)
-        ).get('updated_at', False)
-        if not rates_updated_at_from:
-            raise RatesExistValidationException(
-                field_currency_1=curr_from,
-                field_currency_2=curr_to
-            )
-    else:
-        rates_updated_at_to = last_refresh
-
-
-    # получаем срок допустимого устаревания данных
-    ttl_seconds = sl.get(key="rates_ttl_seconds")
-
-    # получаем свежесть последнего обновления
-    time_delta_from = data_time_comprehension(time_str_1 = rates_updated_at_from)
-    time_delta_to = data_time_comprehension(time_str_1 = rates_updated_at_to)
-
-    # если данные старые обновляем
-    if time_delta_from > ttl_seconds or time_delta_to > ttl_seconds:
-        pass
     # получаем конвертированный курс
     convert_rate = convert_currency(curr_from, curr_to)
 
     return convert_rate, last_refresh
 def trade_operation(user_id: int,
-                 amount: int | float,
+                 amount: float,
                  curr_code: str,
                  operation: str) -> dict:
     """
@@ -298,8 +242,6 @@ def trade_operation(user_id: int,
     Допустимые операции (operation) buy и sell
     """
     # Загружаем данные портфелей
-    dbm = DataBaseManager()
-    portfolios_data = dbm.get_portfolios()
     portfolios_data = load_data_from(file_name="portfolios")
     id_index = -1
     wallets_dict = dict()
@@ -310,7 +252,7 @@ def trade_operation(user_id: int,
             id_index = num
             wallets_data = ld.get("wallets")
     if id_index == -1:
-        raise PortfolioDontFindException(field = str(user_id))
+        raise Exception()
     # Создаем список экземпляров кошельков
     for key, val in wallets_data.items():
         wallets_dict[key] = Wallet(currency_code=key,
@@ -324,73 +266,52 @@ def trade_operation(user_id: int,
     if operation == "buy" and curr_code not in portfolio_example.wallets.keys():
         portfolio_example.add_currency(currency_code = curr_code)
 
-    # загружаем курсы валют из локального хранилища
-    rates_data = dbm.get_rates()
-
+    rates_data = load_data_from("rates")
+    if not rates_data:
+        ensure_rates_if_missing()
+        rates_data = load_data_from("rates")
     exchange_rates = rates_data.get('pairs')
-    # получаем код базовой валюты и курс
     base_val_code = SettingsLoader().get(key="base_currency")
+
     code_rate_data = exchange_rates.get(
                         curr_code_union(curr_code,
                                         base_val_code))
-    # если операция происходит с базовой валютой, то курс равен 1
+
     if curr_code == base_val_code:
         exchange_rate = 1
     else:
         exchange_rate = code_rate_data.get("rate", False)
         if not exchange_rate:
-            raise RatesExistValidationException(
-                field_currency_1= curr_code,
-                field_currency_2= base_val_code
-            )
-    # получаем кошелёк
+            raise Exception()
+
     actual_wallet = portfolio_example.get_wallet(curr_code)
     old_value = actual_wallet.balance
-    # производим торговую операцию
     if operation == "buy":
         actual_wallet.deposit(amount)
     if operation == "sell":
         actual_wallet.withdraw(amount)
-    # получаем новое значение баланса кошелька
     new_value = actual_wallet.balance
+
     base_curr_operation_value = apply_rate(amount, exchange_rate)
 
-
-    # Переводи кошельки в формат для сохранения в файл
     wallets_data = dict()
+    # Переводи кошельки в формат для сохранения в файл
     for key, wallet in portfolio_example.wallets.items():
         wallets_data[key] = {"balance" : wallet.balance}
-    # сохраняем портфель
+
     portfolios_data[id_index] = {"user_id": user_id, "wallets": wallets_data}
-    dbm.save_portfolios(new_data = portfolios_data)
+    save_data_in(file_name = "portfolios", input_data = portfolios_data)
 
 
-    # очищаем кеш
-    portfolio_fun.clear()
-    show_rates_fun.clear()
-    # информация для логирования
-    log_mass = ""
-    user_data = load_data_from("users",
-                               tag="user_id",
-                               tag_name=str(user_id))
-    log_mass += f"user=\'{user_data.get('username')}\' "
-    log_mass += f"currency='{curr_code}' "
-    log_mass += f"amount='{amount}' "
-    log_mass += f"rate='{exchange_rate}' "
-    log_mass += f"base='{base_val_code}' "
-    log_mass_verbose = "Balance before (" + str(old_value)
-    log_mass_verbose += ") -> after (" + str(new_value) +") "
     return {"old_value": old_value,
             "new_value": new_value,
             "base_curr_operation_value": base_curr_operation_value,
             "exchange_rate": (1/exchange_rate),
-            "base_val_code": base_val_code,
-            "log_info": log_mass,
-            "log_info_verbose": log_mass_verbose}
+            "base_val_code": base_val_code}
 
 @log_action("BUY", verbose = True)
 def buy(user_id: int,
-                 amount: int | float,
+                 amount: float,
                  curr_code: str,
                  ) -> dict:
     """
@@ -404,7 +325,7 @@ def buy(user_id: int,
                            operation = "buy")
 @log_action("SELL")
 def sell(user_id: int,
-                 amount: int | float,
+                 amount: float,
                  curr_code: str,
                  ) -> dict:
     """
@@ -416,14 +337,5 @@ def sell(user_id: int,
                            amount = amount,
                            curr_code = curr_code,
                            operation = "sell")
-
-
-
-
-
-
-
-
-
 
 
