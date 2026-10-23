@@ -1,26 +1,53 @@
 import shlex
 from typing import List, Dict, Set, Any, Callable
 import logging
-
-from valutatrade_hub.core.usecases import (portfolio_fun, get_rate, buy, sell,
-    register_new_account, login_account)
-from valutatrade_hub.core.utils import dynamic_round, ensure_rates_if_missing
-
 from prettytable import PrettyTable
 
+from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.usecases import (
+    portfolio_fun,
+    get_rate,
+    buy,
+    sell,
+    register_new_account,
+    login_account,
+    change_password)
+from valutatrade_hub.core.utils import dynamic_round
+from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.decorators import (
+    session_check,
+    validate_command,
+    handle_errors,
+    log_action)
+
+from valutatrade_hub.core.exceptions import (
+    ValidationException,
+    SymbolConsoleParserException,
+    RequestConsoleParserException,
+    SpaceConsoleParserException,
+    UnknownCommandConsoleParserException,
+    ConsoleParserException)
+from valutatrade_hub.logging_config import setup_logger
 
 
 # ==================================================================================
 # Основная функция модуля
 # ==================================================================================
-
+sl = SettingsLoader()
 
 def run() -> None:
     """
     Функция ввода данных от пользователя
     """
-    ensure_rates_if_missing()
+    # проверка загрузки данных из config.json
+    if not commands_signature:
+        print("config.json не найден или повреждён.")
+        return None
+    # настройка логгера
     session_manager = SessionManager()
+    setup_logger(log_dir = sl.get(key='log_path'),
+                 log_file_name = sl.get(key='log_file_name'),
+                 name = sl.get(key='logger_name'))
     while True:
         user_input = input('>>> Введите команду: ')
         try:
@@ -35,12 +62,13 @@ def run() -> None:
         parsing_console_data = None
         try:
             parsing_console_data = parse_input_str(command_name, args[1:])
-        except Exception as e:
+        except ConsoleParserException as e:
             print(e)
         if parsing_console_data is not None:
             cli_args = parsing_console_data
             # ключи служебных атрибутов в формате "_*"
             cli_args["_session"] = session_manager
+
             cli_return = get_cli_fun(command_name)(**cli_args)
             if not cli_return:
                 break
@@ -50,58 +78,12 @@ def run() -> None:
                     print(cli_return)
 
 # ==================================================================================
-# Константы, сигнатуры
-# ==================================================================================
+# данные конфигурации. Так как они присваиваются то не написаны в верхнем регистре
+# как константы
+currency_code_set = sl.get("supported_currency")
+allowed_chars = set(sl.get("allowed_chars"))
+commands_signature = sl.get("commands_signature")
 
-CURRENCY_CODE_SET = {
-    "USD",
-    "EUR",
-    "BTC",
-    "RUB",
-    "ETH"
-}
-
-ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyz"
-                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                    "0123456789"
-                    "_.-!@#*")
-# словарь сигнатуры консольных команд
-COMMANDS_SIGNATURE = {
-        "exit": {},
-        "help": {},
-        "register": {
-            "--username": {"exist": True, "type": str,},
-            "--password": {"exist": True, "min_len": 4, "type": str}},
-        "login": {
-            "--username": {"exist": True, "type": str},
-            "--password": {"exist": True, "min_len": 4, "type": str}},
-        "buy": {
-            "--currency": {"exist": True, "type": str,
-                          "currency_code_validation":CURRENCY_CODE_SET},
-            "--amount":   {"exist": True, "type": float}},
-        "sell": {
-            "--currency": {"exist": True, "type": str,
-                          "currency_code_validation":CURRENCY_CODE_SET},
-            "--amount":   {"exist": True, "type": float}},
-        "get-rate": {
-            "--from":     {"exist": True, "type": str,
-                          "currency_code_validation":CURRENCY_CODE_SET},
-            "--to":       {"exist": True, "type": str,
-                          "currency_code_validation": CURRENCY_CODE_SET}},
-        "show-portfolio": {
-            "--base":     {"exist": False, "type": str,
-                          "currency_code_validation": CURRENCY_CODE_SET}},
-    }
-# Человекочитаемый формат команд
-FIELD_NAMES = {
-    "--username": "Имя пользователя",
-    "--password": "Пароль",
-    "--currency": "Валюта",
-    "--amount": "Сумма",
-    "--base": "Валюта сравнения",
-    "--from": "Валюта которую конвертируем",
-    "--to": "Валюта в которую конвертируем"
-}
 # ==================================================================================
 # Классы (инструменты)
 # ==================================================================================
@@ -158,6 +140,7 @@ class SessionManager:
 # Тоже можно было бы перенести в отдельный модуль в cli
 class FormattedOutput:
     """Класс для определения формата текстового вывода для разных команд"""
+
 
     @staticmethod
     def register_output_format(_password: str = "",
@@ -304,14 +287,14 @@ def parse_input_str(command_name: str,
     состоящий из ключа(ключевого слова) и значения
     """
     # получаем названий команд
-    commands_name_set = {k for k in COMMANDS_SIGNATURE.keys()}
+    commands_name_set = {k for k in commands_signature.keys()}
 
     # проверяем что команда присутствует в списке допустимых
     if command_name not in commands_name_set:
-        raise Exception()
+        raise UnknownCommandConsoleParserException(field = command_name)
 
     # получаем копию словаря сигнатуры команд
-    key_words = {**COMMANDS_SIGNATURE}
+    key_words = {**commands_signature}
 
     num_w = 0
     value_block = dict()
@@ -322,21 +305,26 @@ def parse_input_str(command_name: str,
         # проверяем соответствие слово на соответствие допустимым аргументам команды
         if token in k_words:
             if token in value_block:
-                raise Exception()
+                raise RequestConsoleParserException(command_name=command_name,
+                                                 req=" ".join(command_args))
             args_name = token
             value_block[args_name] = ''
         else:
             # проверяем на корректность ввода и записываем в значение аргумента
             if not args_name:
-                raise Exception()
+                raise RequestConsoleParserException(command_name=command_name,
+                                           req = " ".join(command_args))
             if value_block[args_name]:
                 if "--" in token:
-                    raise Exception()
+                    raise RequestConsoleParserException(command_name=command_name,
+                                                     req=" ".join(command_args))
                 else:
-                    raise Exception()
+                    raise SpaceConsoleParserException(field = args_name)
             # проверяем на допустимые символы ввода
-            if any(ch not in ALLOWED_CHARS for ch in token):
-                raise Exception()
+            if any(ch not in allowed_chars for ch in token):
+                raise SymbolConsoleParserException(
+                    field = args_name,
+                    allowed = str(sorted(allowed_chars)))
             value_block[args_name] += token
         num_w += 1
     return value_block
@@ -344,17 +332,19 @@ def parse_input_str(command_name: str,
 # ==================================================================================
 # Консольные функции
 # ==================================================================================
-
+@handle_errors
 def cli_exit_fun(**k_cli) -> bool:
     """Функция выхода из программы"""
     k_cli.get('_session').exit_session()
 
     return False
+@handle_errors
 def cli_help_fun(**k_cli) -> str:
     """Функция получения списка допустимых команд"""
-    return FormattedOutput().help_output_format(COMMANDS_SIGNATURE)
+    return FormattedOutput().help_output_format(commands_signature)
 
-
+@handle_errors
+@validate_command( "register")
 def cli_register_fun(**k_cli) -> str:
     """
     Функция регистрации пользователя
@@ -368,29 +358,31 @@ def cli_register_fun(**k_cli) -> str:
                                _password = _password,
                                _id = str(acc_id))
 
+@handle_errors
+@validate_command("login")
 def cli_login_fun(**k_cli) -> str:
     """
     Функция входа пользователя в систему, вызывает проверку пароля,
     при успешной проверке активирует сессионный менеджер,
     """
     session_manager = k_cli.get('_session')
-    if not session_manager.check_session:
-        return ""
     _user_name = k_cli.get('--username')
     _password = k_cli.get('--password')
     user_id = login_account(_user_name, _password).get("result")
     return session_manager.open_session(user_id=user_id,
                                        user_name=_user_name)
 
+
+@handle_errors
+@session_check
+@validate_command("show-portfolio")
 def cli_show_portfolio_fun(**k_cli) -> str:
     """
     Функция вывода портфеля всех кошельков,
     опционально переводит в выбранную валюту
     """
     session_manager = k_cli.get('_session')
-    if not session_manager.check_session:
-        return ""
-    base_code = k_cli.get('--base') or "USD"
+    base_code = k_cli.get('--base') or sl.get(key="base_currency")
     base_code = get_currency(code = base_code)
     portfolio_fun_data = portfolio_fun(
                                 user_id= session_manager.session_id,
@@ -398,46 +390,51 @@ def cli_show_portfolio_fun(**k_cli) -> str:
                                 )
     return FormattedOutput().show_portfolio_output_format(*portfolio_fun_data)
 
+@handle_errors
+@session_check
+@validate_command("buy")
 def cli_buy_fun(**k_cli) -> str:
     """Функция обработки команды на покупку"""
     session_manager = k_cli.get('_session')
-    if not session_manager.check_session:
-        return ""
     _currency = k_cli['--currency']
     _amount = k_cli['--amount']
+    _currency = get_currency(code = k_cli.get('--currency'))
     use_case_ret = buy(user_id = session_manager.session_id,
-                       curr_code = _currency,
+                       curr_code = _currency.code,
                        amount = _amount)
     return FormattedOutput().buy_output_format(
                       amount = _amount,
-                      currency = _currency,
+                      currency = _currency.code,
                       use_cases_ret = use_case_ret
                       )
 
+@handle_errors
+@session_check
+@validate_command("sell")
 def cli_sell_fun(**k_cli) ->str:
     """Функция обработки команды на продажу"""
     session_manager = k_cli.get('_session')
-
-    if not session_manager.check_session:
-        return ""
-
     _currency = k_cli['--currency']
     _amount = k_cli['--amount']
+    _currency = get_currency(code=k_cli.get('--currency'))
     use_case_ret = sell(user_id=session_manager.session_id,
-                       curr_code=_currency,
+                       curr_code=_currency.code,
                        amount=_amount)
     return FormattedOutput().sell_output_format(
         amount=_amount,
-        currency=_currency,
+        currency=_currency.code,
         use_cases_ret=use_case_ret
     )
 
-
+@handle_errors
+@validate_command("get-rate")
 def cli_get_rates(**k_cli) -> str:
     """Функция обработки команды на показ курса валют"""
 
     curr_from = k_cli['--from']
     curr_to = k_cli['--to']
+    curr_from = get_currency(code=k_cli.get('--from'))
+    curr_to = get_currency(code=k_cli.get('--to'))
     exc_rate, last_refresh = get_rate(
              curr_from = curr_from.code,
              curr_to = curr_to.code)
@@ -447,35 +444,13 @@ def cli_get_rates(**k_cli) -> str:
              exc_rate = exc_rate,
              last_refresh = last_refresh)
 
-def cli_show_rates(**k_cli) -> str:
-    """
-    Обрабатываем запрос на показ курса валют
-    по фильтру, либо топ криптовалют, либо
-    указанную в --currency, опционально показываем
-    в валюте указанной в --base
-    """
-    converted_code = get_currency(code = sl.get(key="base_currency"))
-    if k_cli.get("--base"):
-        converted_code = get_currency(code = k_cli["--base"])
-    if k_cli.get("--currency"):
-        _curr_code = get_currency(code = k_cli["--currency"])
-        result = show_rates_fun(filtered_key = "currency",
-                                curr_code = _curr_code.code,
-                                convert_code = converted_code.code)
-    elif '--top' in k_cli:
-
-        result = show_rates_fun(filtered_key="top",
-                                top_n = k_cli["--top"],
-                                convert_code=converted_code.code)
-    else:
-        result = show_rates_fun(convert_code=converted_code.code)
-
-
-    return FormattedOutput().show_rates_output_format(result)
-
-
-
-
+@handle_errors
+@session_check
+@validate_command("change-password")
+def cli_change_password(**k_cli) -> str:
+    """Обработка команды на смену пароля"""
+    change_password(k_cli.get("--password"), k_cli.get('_session').session_id)
+    return f"Пароль успешно изменен."
 
 
 # ==================================================================================
@@ -489,9 +464,20 @@ CLI_FUN = {
     "buy" : cli_buy_fun,
     "sell" : cli_sell_fun,
     "get-rate" : cli_get_rates,
+    "change-password": cli_change_password,
     "help": cli_help_fun
 }
 
 def get_cli_fun(command_name:str) -> Callable:
     """Передача cli_функций в run() по словарю CLI_FUN"""
-    return CLI_FUN[command_name]
+    if command_name in CLI_FUN:
+        return CLI_FUN[command_name]
+    else:
+        # проверка на случай если в config.json будет добавлена
+        # не определенная в программе команда
+        def unexpected_command_in_config(*args) -> str:
+            """Проверка корректности команды из config.json"""
+            return ("Проверьте файл config.json, "
+                    "в список команд добавлена "
+                    "не поддерживаемая функция")
+        return unexpected_command_in_config

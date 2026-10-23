@@ -1,6 +1,5 @@
 from datetime import datetime
 
-from valutatrade_hub.parser_service.config import ParserConfig
 from valutatrade_hub.infra.databese import DataBaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.core.models import (
@@ -9,12 +8,9 @@ from valutatrade_hub.core.models import (
     Wallet)
 from valutatrade_hub.core.utils import (
     apply_rate,
-    load_data_from,
-    save_data_in,
     password_creator,
     curr_code_union,
-    data_time_comprehension,
-    ensure_rates_if_missing
+    data_time_comprehension
 )
 from valutatrade_hub.decorators import log_action, memoize
 from valutatrade_hub.core.currencies import get_currency

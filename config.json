@@ -1,0 +1,40 @@
+{
+  "data_path": "data",
+  "rates_ttl_seconds": 100,
+  "base_currency": "USD",
+  "log_path": "logs",
+  "log_file_name": "parser.log",
+  "logger_name": "logger_1",
+  "supported_currency": ["USD", "EUR", "BTC", "RUB","ETH"],
+
+  "allowed_chars" : "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-!@#*",
+  "commands_signature" : {
+        "exit": {},
+        "help": {},
+        "register": {
+            "--username": {"exist": true, "type": "str"},
+            "--password": {"exist": true, "min_len": 4, "type": "str"}},
+        "login": {
+            "--username": {"exist": true, "type": "str"},
+            "--password": {"exist": true, "min_len": 4, "type": "str"}},
+        "buy": {
+            "--currency": {"exist": true, "type": "str",
+                          "currency_code_validation":["USD", "EUR", "BTC", "RUB","ETH"]},
+            "--amount":   {"exist": true, "type": "float"}},
+        "sell": {
+            "--currency": {"exist": true, "type": "str",
+                          "currency_code_validation":["USD", "EUR", "BTC", "RUB","ETH"]},
+            "--amount":   {"exist": true, "type": "float"}},
+        "get-rate": {
+            "--from":     {"exist": true, "type": "str",
+                          "currency_code_validation":["USD", "EUR", "BTC", "RUB","ETH"]},
+            "--to":       {"exist": true, "type": "str",
+                          "currency_code_validation": ["USD", "EUR", "BTC", "RUB","ETH"]}},
+        "show-portfolio": {
+            "--base":     {"exist": false, "type": "str",
+                          "currency_code_validation": ["USD", "EUR", "BTC", "RUB","ETH"]}},
+
+        "change-password": {
+            "--password": {"exist": true, "min_len": 4, "type": "str"}}
+      }
+}
