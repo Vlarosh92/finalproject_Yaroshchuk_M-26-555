@@ -1,11 +1,18 @@
 from datetime import datetime
+import os
 
-
+from valutatrade_hub.decorators import check_len, positive_check
 from valutatrade_hub.core.utils import (
     password_check,
     curr_code_union,
-    password_changer
-)
+    password_changer)
+from valutatrade_hub.core.exceptions import (
+    InsufficientFundsError,
+    WalletsException,
+    ExistValidationException,
+    TypeValidationException,
+    ValidationException)
+from valutatrade_hub.infra.settings import SettingsLoader
 
 
 
@@ -36,6 +43,7 @@ class Users:
                 "registration_date": self._registration_date.strftime(
                     "%Y-%m-%dT%H:%M:%S")}
 
+    @check_len(field_name = 'new_password', meth_name = "Пароль", min_len = 4)
     def change_password(self,
                         new_password: str) -> None:
         """
@@ -43,21 +51,15 @@ class Users:
         формате, хеширует, и обновляет хешированные пароль
         и соль.
         """
-        if isinstance(new_password, str) and len(new_password) > 3:
-            self._hashed_password = password_changer(new_password, self._salt)
-        else:
-            raise Exception()
+        self._hashed_password = password_changer(new_password, self._salt)
 
+    @check_len(field_name = 'password', meth_name = "Пароль", min_len = 4)
     def verify_password(self,
                         password: str) -> bool:
         """
         Метод проверяет введенный пароль на соответствие паролю аккаунта.
         """
-        if isinstance(new_password, str) and len(new_password) > 3:
-            return password_check(self._hashed_password, password, self._salt)
-        else:
-            raise Exception()
-
+        return password_check(self._hashed_password, password, self._salt)
 
     # Геттеры _______________________________________________________
     @property
@@ -88,11 +90,14 @@ class Users:
         if value.strip():
             self._username = value
         else:
-            Exception()
+            ExistValidationException(field="username")
     @registration_date.setter
     def registration_date(self, reg_data: datetime):
         """установка даты регистрации пользователя"""
+        if not isinstance(reg_data, datetime):
+            TypeValidationException(field = "datetime")
         self._registration_date = reg_data
+
 
 
 
@@ -105,24 +110,27 @@ class Wallet:
         self._balance = balance
 
     # Методы ________________________________________________________
-
+    @positive_check(field_name = 'amount', meth_name = "Сумма операции")
     def deposit(self, amount: float) -> None:
         """
         Пополнение кошелька на сумму amount
         """
-        if amount > 0:
-            self._balance = self._balance + amount
+        self._balance = self._balance + amount
 
+    @positive_check(field_name = 'amount', meth_name = "Сумма операции")
     def withdraw(self, amount: float) -> None:
         """
         Снятие с кошелька суммы
         amount, в случае не превышения
         суммы на кошельке
         """
-        if self._balance >= amount and amount>0:
+        if self._balance >= amount:
             self._balance = self._balance - amount
         else:
-            raise Exception()
+            raise InsufficientFundsError(
+                        available = self._balance,
+                        required = amount,
+                        code = self.currency_code)
 
     def get_balance_info(self) -> dict:
         """
@@ -140,13 +148,14 @@ class Wallet:
     @balance.setter
     def balance(self, value: float):
         """установка баланса счета"""
-        if isinstance(value, float):
-            if value >= 0:
-                self._balance = value
-            else:
-                raise Exception()
-        else:
-            raise Exception()
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            raise TypeValidationException(field="balance")
+        if amount < 0:
+            raise ValidationException(message="Баланс не должен быть отрицательным")
+        self._balance = amount
+
 
 class Portfolio:
     def __init__(self,
@@ -170,7 +179,6 @@ class Portfolio:
 
     def get_total_value(self,
                         base_currency: str = "USD",
-                        settings_base_curr: str = "USD",
                         rates_pairs: dict = None) -> float:
         """
         Функция возращает сумму по всем кошелькам
@@ -178,6 +186,7 @@ class Portfolio:
         """
         if rates_pairs is None:
             return 0
+        settings_base_curr = SettingsLoader().get(key="base_currency")
         tot_sum = 0
         for k, w in self.wallets.items():
             if k == settings_base_curr:
@@ -198,7 +207,7 @@ class Portfolio:
         Если кошелька нет выдает ошибку.
         """
         if currency_code not in self._wallets:
-            raise WalletsException(message = "Кошелька с таким кодом не существует")
+            raise WalletsException(message = f"Кошелька {currency_code} не существует")
         return self._wallets[currency_code]
 
     # Геттеры _______________________________________________________
@@ -214,3 +223,7 @@ class Portfolio:
     def wallets(self):
         """Возвращает копию словаря кошельков"""
         return {**self._wallets}
+
+
+
+
