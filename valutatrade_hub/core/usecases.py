@@ -1,7 +1,6 @@
 from datetime import datetime
 
 
-from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.core.models import (
     Users,
     Portfolio,
@@ -162,7 +161,6 @@ def change_password(password: str,
     save_data_in(file_name='users',
                  input_data=users_data)
 
-@log_action("REGISTER")
 def register_new_account(username: str,
                          password: str) -> dict:
     """Функция регистрации нового аккаунта"""
@@ -241,6 +239,7 @@ def trade_operation(user_id: int,
     Функция для проведения торговых операций
     Допустимые операции (operation) buy и sell
     """
+
     # Загружаем данные портфелей
     portfolios_data = load_data_from(file_name="portfolios")
     id_index = -1
@@ -271,7 +270,7 @@ def trade_operation(user_id: int,
         ensure_rates_if_missing()
         rates_data = load_data_from("rates")
     exchange_rates = rates_data.get('pairs')
-    base_val_code = SettingsLoader().get(key="base_currency")
+    base_val_code = "USD"
 
     code_rate_data = exchange_rates.get(
                         curr_code_union(curr_code,
