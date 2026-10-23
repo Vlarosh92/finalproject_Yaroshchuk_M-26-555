@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from valutatrade_hub.infra.databese import DataBaseManager
+from valutatrade_hub.infra.database import DataBaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.core.models import (
     Users,
