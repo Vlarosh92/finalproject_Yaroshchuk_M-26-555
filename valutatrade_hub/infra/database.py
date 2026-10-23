@@ -1,6 +1,9 @@
 import os
 import json
 import tempfile
+
+from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 
 from valutatrade_hub.core.exceptions import FileSaveException, FileLoadException
@@ -45,9 +48,9 @@ class DataBaseManager:
                 user_data["registration_date"] = str_to_datatime(user_data["registration_date"])
             return loading_data
 
-        cached = self._dict_users.get(user_id)
+        cached = self._dict_users.get(str(user_id))
         if cached is not None:
-            return cached
+            return deepcopy(cached)
 
         loading_user = self._load_data_from(file_name="users",
                                                        tag="user_id",
@@ -55,12 +58,24 @@ class DataBaseManager:
 
         loading_user["registration_date"] = str_to_datatime(loading_user["registration_date"])
         self._dict_users[str(loading_user['user_id'])] = loading_user
-        return self._dict_users.get(str(user_id), [])
+        return deepcopy(self._dict_users.get(str(user_id), []))
 
-    def save_user(self, new_data: dict) -> None:
+    def save_user(self,
+                  new_data: dict | list,
+                  full_save: bool = False) -> None:
         """Сохраняем данные пользователей"""
+        for nd in new_data:
+            if isinstance(nd.get("registration_date"), datetime):
+                nd["registration_date"] = nd["registration_date"].strftime(
+                    "%Y-%m-%dT%H:%M:%S")
         self._upsert_list(file_name='users',
                           input_data=new_data)
+        if full_save:
+            self._overwrite_data_in(file_name='users',
+                                    input_data=new_data)
+        else:
+            self._upsert_list(file_name='users',
+                              input_data=new_data)
         # обновляем кеш при записи новых данных
         self._dict_users = {}
 
@@ -71,13 +86,13 @@ class DataBaseManager:
             return self._load_data_from(file_name="rates")
         cached = self._dict_rates.get(code)
         if cached is not None:
-            return cached
+            return deepcopy(cached)
         loading_rate = self._load_data_from(file_name="rates")
         pair_code=curr_code_union(code,
             SettingsLoader().get(key="base_currency"))
 
         self._dict_rates[code] = loading_rate.get('pairs').get(pair_code)
-        return self._dict_rates.get(code, [])
+        return deepcopy(self._dict_rates.get(code, []))
 
     def save_rates(self, input_rates: dict | list):
         """Сохраняем курсы валют"""
@@ -101,19 +116,27 @@ class DataBaseManager:
         if user_id is None:
             return self._load_data_from(file_name="portfolios")
 
-        cached = self._dict_portfolios.get(user_id)
+        cached = self._dict_portfolios.get(str(user_id))
         if cached is not None:
-            return cached
+            return deepcopy(cached)
 
         loading_portf = self._load_data_from(file_name="portfolios",
                                                         tag="user_id",
                                                         tag_name=str(user_id))
-        self._dict_portfolios[user_id] = loading_portf
-        return self._dict_portfolios.get(str(user_id), [])
 
-    def save_portfolios(self, new_data: dict) -> None:
+        self._dict_portfolios[str(user_id)] = loading_portf
+
+        return deepcopy(self._dict_portfolios.get(str(user_id), []))
+
+    def save_portfolios(self,
+                        new_data: dict | list,
+                        full_save: bool = False) -> None:
         """Сохраняем данные портфелей"""
-        self._upsert_list(file_name='portfolios',
+        if full_save:
+            self._overwrite_data_in(file_name='portfolios',
+                                    input_data=new_data)
+        else:
+            self._upsert_list(file_name='portfolios',
                           input_data=new_data)
         # обновляем кеш при записи новых данных
         self._dict_portfolios = {}
