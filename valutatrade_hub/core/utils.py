@@ -6,7 +6,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-
+def status_code_api_err(status_code: int) -> str:
+    """
+    Функция для возврата сообщений об
+    ошибках подключения к API-клиентам
+    """
+    mess = "код ошибки: " + str(status_code)
+    if status_code == 429:
+        mess = ("Слишком "
+                "много запросов к API. "
+                "Пожалуйста подождите")
+    if status_code == 401:
+        mess = ("Неверный API-ключ, проверьте "
+                "корректность и наличие "
+                "EXCHANGERATE_API_KEY")
+    if 400 <= status_code < 500:
+        mess = f"Ошибка запроса (код {status_code})"
+    if 500 <= status_code < 600:
+        mess = f"Сервер временно недоступен (код {status_code})"
+    return mess
 
 def dynamic_round(value: float,
                   num_digits: int = 2) -> str:

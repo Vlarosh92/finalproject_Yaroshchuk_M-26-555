@@ -16,13 +16,20 @@ from valutatrade_hub.decorators import log_action, memoize
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import (
     CurrencyNotFoundError,
+    ApiRequestError,
     RatesExistValidationException,
     UserAuthentificationException,
     UserExistAuthentificationException,
     WalletsException,
+    CacheExistException,
+    CacheCurrException,
+    ApiClientsError,
     PasswordAuthentificationException,
     PortfolioDontFindException
 )
+from valutatrade_hub.parser_service.updater import RatesUpdater
+from valutatrade_hub.parser_service.api_clients import ExchangeRateApiClient, CoinGeckoClient
+from valutatrade_hub.parser_service.storage import ApiStorageClass
 
 
 def convert_currency(curr_code_base: str,
@@ -280,7 +287,10 @@ def get_rate(curr_from: str,
 
     # если данные старые обновляем
     if time_delta_from > ttl_seconds or time_delta_to > ttl_seconds:
-        pass
+        try:
+            build_rates_updater().run_update()
+        except ApiRequestError as e:
+            raise e
     # получаем конвертированный курс
     convert_rate = convert_currency(curr_from, curr_to)
 
@@ -412,8 +422,126 @@ def sell(user_id: int,
                            curr_code = curr_code,
                            operation = "sell")
 
+def build_rates_updater(source: str | None = None) -> RatesUpdater:
+    """Функция создания RatesUpdater для заданного источника source"""
+    db = DataBaseManager()
+    api_storage = ApiStorageClass(db=db)
+    # получаем список всех клиентов
+    api_client_list = [
+        CoinGeckoClient(),
+        ExchangeRateApiClient()
+    ]
+
+    if source is not None:
+        # Устанавливаем конкретный источник
+        api_client_list = [cls
+                           for cls in api_client_list
+                           if source == cls.source]
+
+        if not api_client_list:
+            raise ApiClientsError(field = source)
+    # очищаем кеш
+    portfolio_fun.clear()
+    show_rates_fun.clear()
+
+    return RatesUpdater(
+        api_clients=api_client_list,
+        storage_class=api_storage
+    )
+
+@memoize
+def show_rates_fun(filtered_key: str = "",
+                   curr_code: str = None,
+                   convert_code: str = None,
+                   top_n: int = 0
+                   ) -> list:
+    """
+    Функция возврата курсов валют с возможностью фильтрации
+    через команды (filtered_key), а также с
+    опциональным приведением к указанной валюте(convert_code)
+    по актуальному курсу. Возвращаем результат фильтрации и время
+    последнего обновления в локальном кеше.
+    """
+    dbm = DataBaseManager()
+    base_val_code =  get_currency(code = SettingsLoader().get(key="base_currency"))
+    rates_dict = dbm.get_rates()
+    if not rates_dict:
+        raise CacheExistException
+
+    pairs = rates_dict["pairs"]
+
+    # Фильтруем по коду валюты
+    if filtered_key == "currency":
+        if (curr_code_union(curr_code, base_val_code.code)
+                not in rates_dict.get("pairs")
+                and curr_code != base_val_code.code):
+            raise CacheCurrException(field=base_val_code.code)
+        filtered_rates = [(curr_code_union(curr_code, convert_code),
+                           convert_currency(curr_code_base = curr_code,
+                                            curr_code_convert = convert_code),
+                           #updated at берется по первой валюте
+                           pairs.get(
+                               curr_code_union(curr_code, base_val_code.code)
+                           ).get("updated_at")
+                           ),
+                          ]
+
+        return filtered_rates
+
+    # Фильтруем топ криптовалют по top_n самых дорогих
+    if filtered_key == "top":
+
+        filtered_rates = {(curr_code_union(k.replace("_"+base_val_code.code, ""),
+                                           convert_code),
+                           convert_currency(
+                               curr_code_base = k.replace("_"+base_val_code.code, ""),
+                               curr_code_convert = convert_code),
+
+                          v.get("updated_at")
+                           )
+                          for k, v in pairs.items()
+                          if k.replace("_"+base_val_code.code, "")
+                          in ParserConfig.CRYPTO_CURRENCIES}
+        # Сортировка по курсу с ограничением по top_n
+        sorted_rates = sorted(filtered_rates,
+                              key=lambda x: x[1],
+                              reverse=True)[:top_n]
+
+        return sorted_rates
 
 
+    # если фильтры не указаны возвращаем все
+    converted_rates = [(curr_code_union(
+                                k.replace("_"+base_val_code.code, ""),
+                                convert_code),
+                        convert_currency(
+                                curr_code_base=k.replace(
+                                    "_"+base_val_code.code, ""),
+                                curr_code_convert=convert_code),
+                        v.get("updated_at")
+                        )
+                      for k, v in pairs.items()]
+    # Сортировка по алфавиту
+    sorted_rates = sorted(converted_rates,
+                          key=lambda x: x[0],
+                          reverse=False)
+
+    # Меняем курс выбранной валютной базы к себе самой
+    # на курс системно базовой валюты к выбранной валюте
+    base_correction = []
+    for num, it in enumerate(sorted_rates):
+        split_rate = it[0].split("_")
+        if split_rate[0] == split_rate[1]:
+            base_correction.append(curr_code_union(
+                                        base_val_code.code,
+                                        split_rate[0]))
+            base_correction.append(convert_currency(
+                curr_code_base = base_val_code.code,
+                curr_code_convert = split_rate[0]
+            ))
+            base_correction.append(it[2])
+            sorted_rates[num] = tuple(base_correction)
+    return sorted_rates
 
 
 
