@@ -101,7 +101,7 @@ class Wallet:
                 currency_code: str,
                 balance: float = 0.0
                 ):
-        self._currency_code = currency_code
+        self.currency_code = currency_code
         self._balance = balance
 
     # Методы ________________________________________________________
@@ -128,7 +128,7 @@ class Wallet:
         """
         Вывод информации о кошельке.
         """
-        return {"currency_code" : self._currency_code,
+        return {"currency_code" : self.currency_code,
                 "balance" : self._balance}
 
     # Геттеры _______________________________________________________
@@ -136,24 +136,17 @@ class Wallet:
     def balance(self):
         """получение баланса счета"""
         return self._balance
-
-    @property
-    def currency_code(self):
-        """получение валютного кода кошелька"""
-        return self._currency_code
     # Сеттеры _______________________________________________________
     @balance.setter
     def balance(self, value: float):
         """установка баланса счета"""
-        if isinstance(value, (float, int)):
+        if isinstance(value, float):
             if value >= 0:
                 self._balance = value
             else:
-                raise Exception(
-                    message = "Баланс не должен быть отрицательным")
-
+                raise Exception()
         else:
-            raise Exception(field = "balance")
+            raise Exception()
 
 class Portfolio:
     def __init__(self,
