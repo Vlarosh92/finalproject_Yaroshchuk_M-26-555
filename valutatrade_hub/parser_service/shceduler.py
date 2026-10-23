@@ -1,7 +1,6 @@
 import logging
 import threading
-
-from typing import Callable, Any
+from typing import Any, Callable
 
 from valutatrade_hub.infra.settings import SettingsLoader
 
@@ -36,7 +35,7 @@ class Scheduler:
                                             "пропускаем цикл")
         try:
             self._updater()
-        except (TypeError, ValueError) as e:
+        except (TypeError, ValueError):
             logger.error("Scheduler: ошибка вызова updater")
         except Exception as e:
             logger.error(f"Scheduler: ошибка при "

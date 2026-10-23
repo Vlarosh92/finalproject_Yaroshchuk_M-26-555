@@ -20,7 +20,8 @@ class InsufficientFundsError(TradeException):
                        required: float,
                        code: str
                        ):
-        super().__init__(f"Недостаточно средств: доступно {available} {code}, требуется {required} {code}")
+        super().__init__(f"Недостаточно средств: доступно {available} {code}, "
+                         f"требуется {required} {code}")
 class RatesExistValidationException(TradeException):
     """Исключения при неудачном получении курса"""
     def __init__(self, field_currency_1: str,
@@ -113,8 +114,8 @@ class PortfolioDontFindException(DataBaseException):
 class CacheExistException(DataBaseException):
     """Исключения при отсутствии данных из кеша"""
     def __init__(self):
-        super().__init__(f"Локальный кеш курсов пуст. "
-                         f"Выполните 'update-rates', чтобы загрузить данные.")
+        super().__init__("Локальный кеш курсов пуст. "
+                         "Выполните 'update-rates', чтобы загрузить данные.")
 class CacheCurrException(DataBaseException):
     """Исключения при отсутствии в кеше указанной валюты"""
     def __init__(self, field: str):
@@ -163,7 +164,7 @@ class UserAuthentificationException(AuthentificationException):
 class PasswordAuthentificationException(AuthentificationException):
     """Исключения при неправильно введенном пароле"""
     def __init__(self):
-        super().__init__(f"Неверный пароль")
+        super().__init__("Неверный пароль")
 
 class UserExistAuthentificationException(AuthentificationException):
     """Исключения существования такого пользователя при регистрации"""
@@ -173,7 +174,7 @@ class UserExistAuthentificationException(AuthentificationException):
 class LoginAuthentificationException(AuthentificationException):
     """Исключения при попытке совершить торговые операции без login"""
     def __init__(self):
-        super().__init__(f"Сначала выполните login")
+        super().__init__("Сначала выполните login")
 # ==================================================================================
 # Ошибки парсера консольной строки
 # ==================================================================================

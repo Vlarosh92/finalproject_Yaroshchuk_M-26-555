@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
+
 from valutatrade_hub.core.exceptions import (
-    CurrencyNotFoundError,
     CurrencyExistError,
-    CurrencyTypeError,
     CurrencyLenError,
+    CurrencyNotFoundError,
     CurrencyRegisterError,
-    CurrencySpaceFoundError)
+    CurrencySpaceFoundError,
+    CurrencyTypeError,
+)
 
 
 class Currency(ABC):
@@ -26,7 +28,7 @@ class Currency(ABC):
         if len(code) < 2 or len(code) > 5:
             raise CurrencyLenError(field = f"Код валюты ({code})")
         if code != code.upper():
-            raise CurrencyRegisterError(field = f"Код валюты")
+            raise CurrencyRegisterError(field = "Код валюты")
         self.code = code
     @abstractmethod
     def get_display_info(self) -> str:

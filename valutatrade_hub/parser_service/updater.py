@@ -1,12 +1,12 @@
+import logging
+from datetime import datetime, timezone
+
+from valutatrade_hub.core.exceptions import ApiRequestError, DataBaseException
 from valutatrade_hub.core.utils import data_time_comprehension
 from valutatrade_hub.infra.database import DataBaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.parser_service.api_clients import BaseApiClient
 from valutatrade_hub.parser_service.storage import ApiStorageClass
-from valutatrade_hub.core.exceptions import ApiRequestError, DataBaseException
-from datetime import datetime, timezone
-
-import logging
 
 logger = logging.getLogger(SettingsLoader().get(key='logger_name'))
 
@@ -117,7 +117,7 @@ class RatesUpdater:
         refresh_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
         if total_rates==0:
-            logger.error(f"ERROR: Failed all updated.")
+            logger.error("ERROR: Failed all updated.")
             raise ApiRequestError(message="Обновить курсы не получилось! "
                                           "Попробуйте через некоторое время "
                                           "выполнить update-rates")
@@ -128,7 +128,7 @@ class RatesUpdater:
             logger.info(f"INFO: Writing {total_rates} "
                         f"rates to data/rates.json...")
         except (PermissionError, IndexError, KeyError, DataBaseException):
-            logger.error(f"ERROR: Failed to save rates: Storage error.")
+            logger.error("ERROR: Failed to save rates: Storage error.")
 
 
         if err_end:

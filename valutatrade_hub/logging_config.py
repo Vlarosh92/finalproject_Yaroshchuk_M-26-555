@@ -1,6 +1,5 @@
 import logging
 import os
-
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 

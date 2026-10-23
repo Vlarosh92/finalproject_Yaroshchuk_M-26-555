@@ -1,20 +1,16 @@
 
 from datetime import datetime
-import os
 
-from valutatrade_hub.decorators import check_len, positive_check
-from valutatrade_hub.core.utils import (
-    password_check,
-    curr_code_union,
-    password_changer)
 from valutatrade_hub.core.exceptions import (
-    WalletsException,
-    InsufficientFundsError,
     ExistValidationException,
+    InsufficientFundsError,
     TypeValidationException,
-    ValidationException)
+    ValidationException,
+    WalletsException,
+)
+from valutatrade_hub.core.utils import curr_code_union, password_changer, password_check
+from valutatrade_hub.decorators import check_len, positive_check
 from valutatrade_hub.infra.settings import SettingsLoader
-
 
 
 class Users:

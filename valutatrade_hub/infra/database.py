@@ -1,15 +1,13 @@
-import os
 import json
+import os
 import tempfile
-
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
-from valutatrade_hub.core.exceptions import FileSaveException, FileLoadException
+from valutatrade_hub.core.exceptions import FileLoadException, FileSaveException
 from valutatrade_hub.core.utils import curr_code_union, str_to_datatime
 from valutatrade_hub.infra.settings import SettingsLoader
-
 
 
 class DataBaseManager:
@@ -45,7 +43,8 @@ class DataBaseManager:
 
             loading_data = self._load_data_from(file_name="users")
             for user_data in loading_data:
-                user_data["registration_date"] = str_to_datatime(user_data["registration_date"])
+                user_data["registration_date"] = str_to_datatime(
+                    user_data["registration_date"])
             return loading_data
 
         cached = self._dict_users.get(str(user_id))
@@ -56,7 +55,8 @@ class DataBaseManager:
                                                        tag="user_id",
                                                        tag_name=user_id)
 
-        loading_user["registration_date"] = str_to_datatime(loading_user["registration_date"])
+        loading_user["registration_date"] = str_to_datatime(
+                          loading_user["registration_date"])
         self._dict_users[str(loading_user['user_id'])] = loading_user
         return deepcopy(self._dict_users.get(str(user_id), []))
 

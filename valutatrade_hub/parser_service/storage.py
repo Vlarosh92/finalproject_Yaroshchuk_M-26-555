@@ -1,7 +1,6 @@
 from valutatrade_hub.infra.database import DataBaseManager
 
 
-
 class ApiStorageClass:
     """Класс записи и чтения журнала курса валют"""
     def __init__(self,

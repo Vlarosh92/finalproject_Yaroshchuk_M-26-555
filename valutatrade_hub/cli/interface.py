@@ -1,36 +1,33 @@
 import shlex
-from typing import List, Dict, Set, Any, Callable
-import logging
+from typing import Any, Callable, Dict, List
+
 from prettytable import PrettyTable
 
 from valutatrade_hub.core.currencies import get_currency
-from valutatrade_hub.core.usecases import (
-    build_rates_updater,
-    show_rates_fun,
-    portfolio_fun,
-    get_rate,
-    buy,
-    sell,
-    register_new_account,
-    login_account,
-    change_password)
-from valutatrade_hub.core.utils import dynamic_round
-from valutatrade_hub.infra.settings import SettingsLoader
-from valutatrade_hub.decorators import (
-    session_check,
-    validate_command,
-    handle_errors)
-
 from valutatrade_hub.core.exceptions import (
-    ValidationException,
-    SymbolConsoleParserException,
+    ConsoleParserException,
     RequestConsoleParserException,
     SpaceConsoleParserException,
+    SymbolConsoleParserException,
     UnknownCommandConsoleParserException,
-    ConsoleParserException)
+    ValidationException,
+)
+from valutatrade_hub.core.usecases import (
+    build_rates_updater,
+    buy,
+    change_password,
+    get_rate,
+    login_account,
+    portfolio_fun,
+    register_new_account,
+    sell,
+    show_rates_fun,
+)
+from valutatrade_hub.core.utils import dynamic_round
+from valutatrade_hub.decorators import handle_errors, session_check, validate_command
+from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.logging_config import enable_console_logging, setup_logger
 from valutatrade_hub.parser_service.shceduler import Scheduler
-
 
 # ==================================================================================
 # Основная функция модуля
@@ -116,7 +113,7 @@ class SessionManager:
                     self._user_name = user_name
                     return f"Вы вошли как '{self._user_name}'"
                 else:
-                    return f"вход прерван"
+                    return "вход прерван"
         else:
             self._session_id = user_id
             self._user_name = user_name
@@ -157,7 +154,7 @@ class FormattedOutput:
         pretty_table.align["Валюта"] = "l"
         pretty_table.align["Курс"] = "l"
         pretty_table.align["updated at "] = "l"
-        output_str = f"Rates from cache:\n"
+        output_str = "Rates from cache:\n"
 
         for idata in input_data:
             pretty_table.add_row([
@@ -241,7 +238,8 @@ class FormattedOutput:
         output_str += (f"- {currency}: было {use_cases_ret.get("old_value")} → "
                        f"стало {use_cases_ret.get("new_value")}\n")
         output_str += (f"Оценочная стоимость покупки: "
-                       f"{dynamic_round(value = use_cases_ret.get("base_curr_operation_value"),
+                       f"{dynamic_round(value = use_cases_ret.get(
+                           "base_curr_operation_value"),
                                         num_digits = 2)} "
                        f" {use_cases_ret.get('base_val_code')}")
 
@@ -279,12 +277,12 @@ class FormattedOutput:
                                ) -> str:
         """Формируем строку вывода для команды get-rate"""
         output_str = (f"Курс {curr_from}→{curr_to}: {dynamic_round(
-                                                                   value = exc_rate, 
-                                                                   num_digits = 2)}"
+                                                            value = exc_rate, 
+                                                            num_digits = 2)}"
                       f" (обновлено: {last_refresh})\n")
         output_str += f"Обратный курс {curr_to}→{curr_from}: {dynamic_round(
-                                                                   value = (1 / exc_rate), 
-                                                                   num_digits = 2)}"
+                                                            value = (1 / exc_rate), 
+                                                            num_digits = 2)}"
         return output_str
 
     @staticmethod
@@ -515,7 +513,7 @@ def cli_update_rates(**k_cli) -> str:
 def cli_change_password(**k_cli) -> str:
     """Обработка команды на смену пароля"""
     change_password(k_cli.get("--password"), k_cli.get('_session').session_id)
-    return f"Пароль успешно изменен."
+    return "Пароль успешно изменен."
 
 @handle_errors
 @validate_command("scheduler-run")
@@ -526,7 +524,7 @@ def cli_scheduler_run(**k_cli) -> str:
     scheduler = k_cli.get("_scheduler")
     scheduler.updater = updater.run_update
     scheduler.start()
-    return f"Запущено фоновое обновление курсов валют"
+    return "Запущено фоновое обновление курсов валют"
 
 # ==================================================================================
 # Словарь консольных функции

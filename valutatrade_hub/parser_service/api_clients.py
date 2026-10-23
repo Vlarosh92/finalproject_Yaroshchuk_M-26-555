@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
-
-from valutatrade_hub.core.utils import curr_code_union, status_code_api_err
-from valutatrade_hub.parser_service.config import ParserConfig as Con
-from requests.exceptions import RequestException, Timeout, ConnectionError, HTTPError
-from valutatrade_hub.core.exceptions import ApiRequestError
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+
 import requests
+from requests.exceptions import ConnectionError, HTTPError, RequestException, Timeout
+
+from valutatrade_hub.core.exceptions import ApiRequestError
+from valutatrade_hub.core.utils import curr_code_union, status_code_api_err
+from valutatrade_hub.parser_service.config import ParserConfig as Con
 
 
 class BaseApiClient(ABC):

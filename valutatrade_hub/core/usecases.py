@@ -1,36 +1,37 @@
 from datetime import datetime
 
-from valutatrade_hub.infra.database import DataBaseManager
-from valutatrade_hub.infra.settings import SettingsLoader
-from valutatrade_hub.core.models import (
-    Users,
-    Portfolio,
-    Wallet)
-from valutatrade_hub.core.utils import (
-    apply_rate,
-    password_creator,
-    curr_code_union,
-    data_time_comprehension
-)
-from valutatrade_hub.decorators import log_action, memoize
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import (
-    CurrencyNotFoundError,
+    ApiClientsError,
     ApiRequestError,
+    CacheCurrException,
+    CacheExistException,
+    CurrencyNotFoundError,
+    PasswordAuthentificationException,
+    PortfolioDontFindException,
     RatesExistValidationException,
     UserAuthentificationException,
     UserExistAuthentificationException,
     WalletsException,
-    CacheExistException,
-    CacheCurrException,
-    ApiClientsError,
-    PasswordAuthentificationException,
-    PortfolioDontFindException
 )
-from valutatrade_hub.parser_service.updater import RatesUpdater
-from valutatrade_hub.parser_service.api_clients import ExchangeRateApiClient, CoinGeckoClient
-from valutatrade_hub.parser_service.storage import ApiStorageClass
+from valutatrade_hub.core.models import Portfolio, Users, Wallet
+from valutatrade_hub.core.utils import (
+    apply_rate,
+    curr_code_union,
+    data_time_comprehension,
+    password_creator,
+)
+from valutatrade_hub.decorators import log_action, memoize
+from valutatrade_hub.infra.database import DataBaseManager
+from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.parser_service.api_clients import (
+    CoinGeckoClient,
+    ExchangeRateApiClient,
+)
 from valutatrade_hub.parser_service.config import ParserConfig
+from valutatrade_hub.parser_service.storage import ApiStorageClass
+from valutatrade_hub.parser_service.updater import RatesUpdater
+
 
 def convert_currency(curr_code_base: str,
                      curr_code_convert: str,
@@ -91,10 +92,7 @@ def portfolio_fun(user_id: int,
         raise WalletsException(message = "Отсутствуют кошельки в портфеле")
 
     exchange_rates = dbm.get_rates()
-    # если данные отсутствуют ставим заглушку
-    if not exchange_rates:
-        ensure_rates_if_missing()
-        exchange_rates = load_data_from("rates")
+
 
     code_list = []
     value_list = []
@@ -166,10 +164,10 @@ def change_password(password: str,
 def register_new_account(username: str,
                          password: str) -> dict:
     """Функция регистрации нового аккаунта"""
+
+    dbm = DataBaseManager()
     # Загружаем данные из users.json
     # Если файла нет отдаем пустой список
-    dbm = DataBaseManager()
-
     data_user = dbm.get_user()
     user_name_list = [du['username'] for du in data_user]
 
