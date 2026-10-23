@@ -53,7 +53,7 @@ class Users:
         """
         Метод проверяет введенный пароль на соответствие паролю аккаунта.
         """
-        if isinstance(password, str) and len(password) > 3:
+        if isinstance(new_password, str) and len(new_password) > 3:
             return password_check(self._hashed_password, password, self._salt)
         else:
             raise Exception()

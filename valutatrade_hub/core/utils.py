@@ -7,38 +7,6 @@ from pathlib import Path
 
 
 
-def ensure_rates_if_missing() -> None:
-    """Если rates.json отсутствует, создаёт заглушку"""
-
-    path = Path(root_data_path()) / "rates.json"
-    if not path.exists():
-        stub_data = {
-                "pairs":{
-                    "EUR_USD": {
-                        "rate": 1.0786,
-                        "updated_at": "2025-10-09T10:30:00"
-                    },
-                    "BTC_USD": {
-                        "rate": 59337.21,
-                        "updated_at": "2025-10-09T10:29:42"
-                    },
-                    "RUB_USD": {
-                        "rate": 0.01016,
-                        "updated_at": "2025-10-09T10:31:12"
-                    },
-                    "ETH_USD": {
-                        "rate": 3720.00,
-                        "updated_at": "2025-10-09T10:35:00"
-                    }
-                },
-                "source": "ParserService",
-                "last_refresh": "2025-10-09T10:35:00"
-            }
-        save_data_in(file_name="rates", input_data = stub_data)
-
-
-
-
 
 def dynamic_round(value: float,
                   num_digits: int = 2) -> str:
@@ -117,47 +85,6 @@ def root_data_path() -> Path:
     data_dir = root_path() / data_dir
     data_dir.mkdir(exist_ok=True)
     return data_dir
-# Методы _____________________________________________________
-def load_data_from(file_name: str,
-                   tag: str = None,
-                   tag_name: str = None) -> dict | list:
-    """
-    Загружает данные из директории data
-    из файла указанном в file_name.
-    Допустимо сразу возвратить конкретную запись
-    по тэгу и значению
-    """
-    try:
-        with open(os.path.join(
-                root_data_path(), f"{file_name}.json"),
-                encoding="utf-8") as json_file:
-            if tag is not None and tag_name is not None:
-                load_data = json.load(json_file)
-                for ld in load_data:
-                    if str(ld[tag]) == tag_name:
-                        return ld
-                return []
-            else:
-                return json.load(json_file)
-    except FileNotFoundError:
-        # Если файл не найден отдаем пустой список
-        # Не прокидываем исключения так как при первом
-        # входе это нормальная ситуация
-        return []
-
-
-def save_data_in(file_name: str,
-                 input_data: dict | list
-                 ) -> None:
-    """
-    Сохраняет input_data в директорию data
-    в файл указанном в file_name.
-    """
-    with open(os.path.join(
-            root_data_path(), f"{file_name}.json"),
-            "w",
-            encoding="utf-8") as json_file:
-        json.dump(input_data, json_file, ensure_ascii=False, indent=2)
 
 
 def password_creator(password: str) -> tuple:
