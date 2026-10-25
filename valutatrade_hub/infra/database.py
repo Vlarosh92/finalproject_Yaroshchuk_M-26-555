@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from valutatrade_hub.core.exceptions import FileLoadException, FileSaveException
-from valutatrade_hub.core.utils import curr_code_union, str_to_datatime
+from valutatrade_hub.core.utils import curr_code_union, root_path, str_to_datatime
 from valutatrade_hub.infra.settings import SettingsLoader
 
 
@@ -19,7 +19,27 @@ class DataBaseManager:
     """
     __instance = None
     __initiation = None
-    DATA_FMT = "%Y-%m-%dT%H:%M:%S"
+
+    # Константные данные заглушки курсов
+    _DEFAULT_RATES_STUB = {
+        "pairs": {
+            "EUR_USD": {
+                "rate": 1.0786,
+                "updated_at": "2025-10-09T10:30:00"},
+            "BTC_USD": {
+                "rate": 59337.21,
+                "updated_at": "2025-10-09T10:29:42"},
+            "RUB_USD": {
+                "rate": 0.01016,
+                "updated_at": "2025-10-09T10:31:12"},
+            "ETH_USD": {
+                "rate": 3720.00,
+                "updated_at": "2025-10-09T10:35:00"}
+        },
+        "source": "ParserService",
+        "last_refresh": "2025-10-09T10:35:00"
+    }
+
     def __new__(cls, *args, **kwargs):
         """Создаем синглтон"""
         if cls.__instance is None:
@@ -32,19 +52,26 @@ class DataBaseManager:
         self._dict_rates = {}
         self._dict_users = {}
         self._dict_portfolios = {}
+
+        self._base_currency = SettingsLoader().get(key = "base_currency")
+        self._data_path = SettingsLoader().get(key = "data_path")
+        self._tmp_formats = [
+            SettingsLoader().get(key = "data_format_local"),
+            SettingsLoader().get(key = "data_format_utc")]
         # устанавливаем заглушку если rates.json отсутствуют
         self.ensure_rates_if_missing()
         DataBaseManager.__initiation = True
 
     # Методы работы с данными пользователя_____________________________________
-    def get_user(self, user_id:str = None) -> dict:
+    def get_user(self, user_id:str = None) -> dict | list:
         """Возращаем данные пользователя"""
         if user_id is None:
 
             loading_data = self._load_data_from(file_name="users")
             for user_data in loading_data:
                 user_data["registration_date"] = str_to_datatime(
-                    user_data["registration_date"])
+                    ts = user_data["registration_date"],
+                    tmp_formats = self._tmp_formats)
             return loading_data
 
         cached = self._dict_users.get(str(user_id))
@@ -54,9 +81,12 @@ class DataBaseManager:
         loading_user = self._load_data_from(file_name="users",
                                                        tag="user_id",
                                                        tag_name=user_id)
+        if not loading_user:
+            return []
 
         loading_user["registration_date"] = str_to_datatime(
-                          loading_user["registration_date"])
+                            ts = loading_user["registration_date"],
+                            tmp_formats = self._tmp_formats)
         self._dict_users[str(loading_user['user_id'])] = loading_user
         return deepcopy(self._dict_users.get(str(user_id), []))
 
@@ -67,9 +97,7 @@ class DataBaseManager:
         for nd in new_data:
             if isinstance(nd.get("registration_date"), datetime):
                 nd["registration_date"] = nd["registration_date"].strftime(
-                    "%Y-%m-%dT%H:%M:%S")
-        self._upsert_list(file_name='users',
-                          input_data=new_data)
+                    self._tmp_formats[0])
         if full_save:
             self._overwrite_data_in(file_name='users',
                                     input_data=new_data)
@@ -80,7 +108,7 @@ class DataBaseManager:
         self._dict_users = {}
 
     # Методы работы с данными курсов валют_____________________________________
-    def get_rates(self, code:str = None)-> dict:
+    def get_rates(self, code:str = None)-> dict | list:
         """Возращаем курсы валют"""
         if code is None:
             return self._load_data_from(file_name="rates")
@@ -88,10 +116,13 @@ class DataBaseManager:
         if cached is not None:
             return deepcopy(cached)
         loading_rate = self._load_data_from(file_name="rates")
-        pair_code=curr_code_union(code,
-            SettingsLoader().get(key="base_currency"))
+        pair_code=curr_code_union(code, self._base_currency)
+
+        if not loading_rate:
+            return []
 
         self._dict_rates[code] = loading_rate.get('pairs').get(pair_code)
+
         return deepcopy(self._dict_rates.get(code, []))
 
     def save_rates(self, input_rates: dict | list):
@@ -124,6 +155,9 @@ class DataBaseManager:
                                                         tag="user_id",
                                                         tag_name=str(user_id))
 
+        if not loading_portf:
+            return []
+
         self._dict_portfolios[str(user_id)] = loading_portf
 
         return deepcopy(self._dict_portfolios.get(str(user_id), []))
@@ -153,19 +187,19 @@ class DataBaseManager:
         self._overwrite_data_in(file_name=file_name,
                                 input_data=new_data)
 
-    @staticmethod
-    def _root_data_path() -> str:
+
+    def _root_data_path(self) -> str:
         """
         устанавливаем директорию хранения данных
         создаем если не существует
         """
-        data_dir = SettingsLoader().get("data_path")
-        data_dir = Path(__file__).resolve().parent.parent.parent / data_dir
+        data_dir = self._data_path
+        data_dir = root_path() / data_dir
         data_dir.mkdir(exist_ok=True)
         return data_dir
 
-    @staticmethod
-    def _load_data_from(file_name: str,
+    def _load_data_from(self,
+                        file_name: str,
                        tag: str = None,
                        tag_name: str = None) -> dict | list:
         """
@@ -175,7 +209,7 @@ class DataBaseManager:
         по тэгу и значению
         """
         file_path = os.path.join(
-                DataBaseManager._root_data_path(), f"{file_name}.json")
+                self._root_data_path(), f"{file_name}.json")
         # Если файла нет возвращаем пустой список
         if not os.path.exists(file_path):
             return []
@@ -198,8 +232,8 @@ class DataBaseManager:
 
 
 
-    @staticmethod
-    def _overwrite_data_in(file_name: str,
+    def _overwrite_data_in(self,
+                     file_name: str,
                      input_data: dict | list
                      ) -> None:
         """
@@ -207,7 +241,7 @@ class DataBaseManager:
         в файл указанном в file_name.
         """
         #Модифицируем для записи с помощью временного файла
-        root_dir = DataBaseManager._root_data_path()
+        root_dir = self._root_data_path()
         file_path = os.path.join(root_dir, f"{file_name}.json")
         fd, tmp_path = tempfile.mkstemp(suffix=".json",
                                         prefix=f"{file_name}_",
@@ -226,26 +260,4 @@ class DataBaseManager:
         """Если rates.json отсутствует, создаёт заглушку"""
         path = Path(self._root_data_path()) / "rates.json"
         if not path.exists():
-            stub_data = {
-                    "pairs":{
-                        "EUR_USD": {
-                            "rate": 1.0786,
-                            "updated_at": "2025-10-09T10:30:00"
-                        },
-                        "BTC_USD": {
-                            "rate": 59337.21,
-                            "updated_at": "2025-10-09T10:29:42"
-                        },
-                        "RUB_USD": {
-                            "rate": 0.01016,
-                            "updated_at": "2025-10-09T10:31:12"
-                        },
-                        "ETH_USD": {
-                            "rate": 3720.00,
-                            "updated_at": "2025-10-09T10:35:00"
-                        }
-                    },
-                    "source": "ParserService",
-                    "last_refresh": "2025-10-09T10:35:00"
-                }
-            self.save_rates(stub_data)
+            self.save_rates(self._DEFAULT_RATES_STUB)

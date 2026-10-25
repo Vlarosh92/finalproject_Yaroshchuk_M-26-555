@@ -42,7 +42,7 @@ class CoinGeckoClient(BaseApiClient):
             status_code = response.status_code
             etag = response.headers.get("ETag")
             json_data = response.json()
-            input_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            input_time = datetime.now(timezone.utc).strftime(Con.DATA_FORMATS[1])
             # собираем ответ в список, делаем базовое форматирование
             output_dict = dict()
             for k,v in json_data.items():
@@ -96,7 +96,7 @@ class ExchangeRateApiClient(BaseApiClient):
             json_data = response.json()
             input_data = json_data['conversion_rates']
             input_time = parsedate_to_datetime(json_data['time_last_update_utc'])
-            input_time = input_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            input_time = input_time.strftime(Con.DATA_FORMATS[1])
             output_dict = dict()
             # собираем ответ в список, делаем базовое форматирование
             for fiat in Con.FIAT_CURRENCIES:

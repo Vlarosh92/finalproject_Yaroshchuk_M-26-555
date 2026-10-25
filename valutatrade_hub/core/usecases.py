@@ -1,8 +1,6 @@
 from datetime import datetime
 
-from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import (
-    ApiClientsError,
     ApiRequestError,
     CacheCurrException,
     CacheExistException,
@@ -18,51 +16,20 @@ from valutatrade_hub.core.models import Portfolio, Users, Wallet
 from valutatrade_hub.core.utils import (
     apply_rate,
     curr_code_union,
+    curr_pair_get_code,
     data_time_comprehension,
     password_creator,
 )
 from valutatrade_hub.decorators import log_action, memoize
 from valutatrade_hub.infra.database import DataBaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
-from valutatrade_hub.parser_service.api_clients import (
-    CoinGeckoClient,
-    ExchangeRateApiClient,
-)
 from valutatrade_hub.parser_service.config import ParserConfig
-from valutatrade_hub.parser_service.storage import ApiStorageClass
 from valutatrade_hub.parser_service.updater import RatesUpdater
 
 
-def convert_currency(curr_code_base: str,
-                     curr_code_convert: str,
-                     ) -> float:
-    """
-    Функция конвертации курса базовой валюты
-    к курсу конвертационной валюты
-    """
-    dbm = DataBaseManager()
-    base_sys_code = SettingsLoader().get(key="base_currency")
-
-    # проверяем если первая валюта является базовой приравниваем её курс к 1
-    # иначе составляем пару и ищем в локальном кеше rates.json
-    if curr_code_base == base_sys_code:
-        rate_base = 1
-    else:
-        rate_base_code = curr_code_union(curr_code_base, base_sys_code)
-        rate_base = dbm.get_rates()["pairs"][rate_base_code]['rate']
-
-    # проверяем если вторая валюта является базовой приравниваем её курс к 1
-    # иначе составляем пару и ищем в локальном кеше rates.json
-    if curr_code_convert == base_sys_code:
-        rate_conv = 1
-    else:
-        rate_conv_code = curr_code_union(curr_code_convert, base_sys_code)
-        rate_conv = dbm.get_rates()["pairs"][rate_conv_code]['rate']
-
-    return rate_base / rate_conv
 @memoize
 def portfolio_fun(user_id: int,
-                       curr_base_code: str) -> tuple:
+                       curr_base_code: str) -> dict:
     """
     Функция получения данных по портфелю
     Возращает коды валют их баланс и
@@ -93,26 +60,24 @@ def portfolio_fun(user_id: int,
 
     exchange_rates = dbm.get_rates()
 
-
-    code_list = []
-    value_list = []
-    convert_list = []
+    portfolio_info = []
     for k, w in actual_wallets.items():
+        portfolio_info.append({
+            "code": k,
+            "value": w.balance,
+            "convert": w.balance * convert_currency(k, curr_base_code)
+        })
 
-        code_list.append(k)
-        value_list.append(w.balance)
-        convert_list.append(convert_currency(k, curr_base_code))
-
+    rates_for_tot = {k:v["rate"] for k, v in exchange_rates['pairs'].items()}
     total_sum = curr_portfolio.get_total_value(
         base_currency = curr_base_code,
-        rates_pairs = exchange_rates)
+        settings_base_curr = SettingsLoader().get(key="base_currency"),
+        rates = rates_for_tot)
 
-    return (code_list,
-            value_list,
-            convert_list,
-            curr_portfolio.user.username,
-            curr_base_code,
-            total_sum)
+    return {"portfolio_info": portfolio_info,
+            "username": curr_portfolio.user.username,
+            "code": curr_base_code,
+            "total_sum": total_sum}
 
 
 @log_action("LOGIN")
@@ -166,6 +131,9 @@ def register_new_account(username: str,
     """Функция регистрации нового аккаунта"""
 
     dbm = DataBaseManager()
+    sl = SettingsLoader()
+    # получаем формат даты
+    data_format_local = sl.get(key="data_format_local")
     # Загружаем данные из users.json
     # Если файла нет отдаем пустой список
     data_user = dbm.get_user()
@@ -193,7 +161,7 @@ def register_new_account(username: str,
         'username': user.username,
         'hashed_password': user.hashed_password,
         'salt': user.salt,
-        'registration_date': user.registration_date.strftime("%Y-%m-%dT%H:%M:%S")}]
+        'registration_date': user.registration_date.strftime(data_format_local)}]
     new_portfolio_data = [*data_portfolios, {"user_id": max_id, "wallets": {}}]
 
     # Сохраняем данные
@@ -205,12 +173,13 @@ def register_new_account(username: str,
     log_mass += f"username: {user.username} "
     log_mass += f"user_id: {user.user_id} "
     log_mass += (f"registration_date: "
-                 f"{user.registration_date.strftime("%Y-%m-%dT%H:%M:%S")} ")
+                 f"{user.registration_date.strftime(data_format_local)} ")
 
     return {"result":max_id, "log_info":log_mass}
 def get_rate(curr_from: str,
-             curr_to: str
-             ) -> tuple:
+             curr_to: str,
+             updater: RatesUpdater
+             ) -> dict:
     """
     Функция получения курса валют.
     Проверяет последнее время обновления,
@@ -220,6 +189,11 @@ def get_rate(curr_from: str,
     dbm = DataBaseManager()
     # получаем множество допустимых валют из config.json
     currency_code_set = set(sl.get(key="supported_currency"))
+
+    # получаем форматы дат
+    tmp_formats = [
+        sl.get("data_format_local"),
+        sl.get("data_format_utc")]
 
     # получаем базовую системную валюту из config.json
     base_val_code = sl.get(key="base_currency")
@@ -231,9 +205,9 @@ def get_rate(curr_from: str,
 
     # валидируем данные вводимых валют к допустимым
     if curr_from not in currency_code_set:
-        CurrencyNotFoundError(field = curr_from)
+        raise CurrencyNotFoundError(field = curr_from)
     if curr_to not in currency_code_set:
-        CurrencyNotFoundError(field = curr_to)
+        raise CurrencyNotFoundError(field = curr_to)
 
     # проверяем время последнего обновления валют
     # при вводе базовой валюты берет для сравнения last_refresh
@@ -248,11 +222,12 @@ def get_rate(curr_from: str,
             )
     else:
         rates_updated_at_from = last_refresh
+
     if curr_to != base_val_code:
         rates_updated_at_to = rates.get(
             curr_code_union(curr_to, base_val_code)
         ).get('updated_at', False)
-        if not rates_updated_at_from:
+        if not rates_updated_at_to:
             raise RatesExistValidationException(
                 field_currency_1=curr_from,
                 field_currency_2=curr_to
@@ -265,19 +240,30 @@ def get_rate(curr_from: str,
     ttl_seconds = sl.get(key="rates_ttl_seconds")
 
     # получаем свежесть последнего обновления
-    time_delta_from = data_time_comprehension(time_str_1 = rates_updated_at_from)
-    time_delta_to = data_time_comprehension(time_str_1 = rates_updated_at_to)
+    time_delta_from = data_time_comprehension(
+        time_str_1 = rates_updated_at_from,
+        tmp_formats = tmp_formats)
+
+    time_delta_to = data_time_comprehension(
+        time_str_1 = rates_updated_at_to,
+        tmp_formats = tmp_formats)
 
     # если данные старые обновляем
     if time_delta_from > ttl_seconds or time_delta_to > ttl_seconds:
         try:
-            build_rates_updater().run_update()
+            updater.run_update()
+            last_refresh = exc_rates.get('last_refresh')
         except ApiRequestError as e:
             raise e
+
     # получаем конвертированный курс
     convert_rate = convert_currency(curr_from, curr_to)
+    reverse_rate = (1/convert_rate) if convert_rate!=0 else 0
 
-    return convert_rate, last_refresh
+    return {
+        "convert_rate": convert_rate,
+        "reverse_rate": reverse_rate,
+        "last_refresh": last_refresh}
 def trade_operation(user_id: int,
                  amount: int | float,
                  curr_code: str,
@@ -403,32 +389,34 @@ def sell(user_id: int,
                            curr_code = curr_code,
                            operation = "sell")
 
-def build_rates_updater(source: str | None = None) -> RatesUpdater:
-    """Функция создания RatesUpdater для заданного источника source"""
-    db = DataBaseManager()
-    api_storage = ApiStorageClass(db=db)
-    # получаем список всех клиентов
-    api_client_list = [
-        CoinGeckoClient(),
-        ExchangeRateApiClient()
-    ]
+def convert_currency(curr_code_base: str,
+                     curr_code_convert: str,
+                     ) -> float:
+    """
+    Функция конвертации курса базовой валюты
+    к курсу конвертационной валюты
+    """
+    dbm = DataBaseManager()
+    base_sys_code = SettingsLoader().get(key="base_currency")
 
-    if source is not None:
-        # Устанавливаем конкретный источник
-        api_client_list = [cls
-                           for cls in api_client_list
-                           if source == cls.source]
+    # проверяем если первая валюта является базовой приравниваем её курс к 1
+    # иначе составляем пару и ищем в локальном кеше rates.json
+    if curr_code_base == base_sys_code:
+        rate_base = 1
+    else:
+        rate_base_code = curr_code_union(curr_code_base, base_sys_code)
+        rate_base = dbm.get_rates()["pairs"][rate_base_code]['rate']
 
-        if not api_client_list:
-            raise ApiClientsError(field = source)
-    # очищаем кеш
-    portfolio_fun.clear()
-    show_rates_fun.clear()
+    # проверяем если вторая валюта является базовой приравниваем её курс к 1
+    # иначе составляем пару и ищем в локальном кеше rates.json
+    if curr_code_convert == base_sys_code:
+        rate_conv = 1
+    else:
+        rate_conv_code = curr_code_union(curr_code_convert, base_sys_code)
+        rate_conv = dbm.get_rates()["pairs"][rate_conv_code]['rate']
 
-    return RatesUpdater(
-        api_clients=api_client_list,
-        storage_class=api_storage
-    )
+    return rate_base / rate_conv
+
 
 @memoize
 def show_rates_fun(filtered_key: str = "",
@@ -444,7 +432,7 @@ def show_rates_fun(filtered_key: str = "",
     последнего обновления в локальном кеше.
     """
     dbm = DataBaseManager()
-    base_val_code =  get_currency(code = SettingsLoader().get(key="base_currency"))
+    base_val_code = SettingsLoader().get(key = "base_currency")
     rates_dict = dbm.get_rates()
     if not rates_dict:
         raise CacheExistException
@@ -453,75 +441,115 @@ def show_rates_fun(filtered_key: str = "",
 
     # Фильтруем по коду валюты
     if filtered_key == "currency":
-        if (curr_code_union(curr_code, base_val_code.code)
+        if (curr_code_union(curr_code, base_val_code)
                 not in rates_dict.get("pairs")
-                and curr_code != base_val_code.code):
-            raise CacheCurrException(field=base_val_code.code)
-        filtered_rates = [(curr_code_union(curr_code, convert_code),
-                           convert_currency(curr_code_base = curr_code,
+                and curr_code != base_val_code):
+            raise CacheCurrException(field = base_val_code)
+
+        if curr_code != convert_code:
+            if curr_code != base_val_code:
+                filtered_rates = [{"code_pairs":curr_code_union(
+                                                    curr_code,
+                                                    convert_code),
+                           "rates":convert_currency(curr_code_base = curr_code,
                                             curr_code_convert = convert_code),
                            #updated at берется по первой валюте
-                           pairs.get(
-                               curr_code_union(curr_code, base_val_code.code)
+                           "updated_at":pairs.get(
+                               curr_code_union(curr_code, base_val_code)
                            ).get("updated_at")
-                           ),
+                            },
                           ]
+            else:
+                filtered_rates = [{"code_pairs":curr_code_union(
+                                                    curr_code,
+                                                    convert_code),
+                               "rates":convert_currency(curr_code_base = curr_code,
+                                            curr_code_convert = convert_code),
+                            "updated_at":pairs.get(
+                                    curr_code_union(convert_code, base_val_code)
+                            ).get("updated_at")
+                                   },
+                            ]
+        else:
+
+            filtered_rates = [
+                {"code_pairs":curr_code_union(curr_code, convert_code),
+                 "rates":1,
+                 "updated_at":rates_dict.get("last_refresh")}]
 
         return filtered_rates
 
     # Фильтруем топ криптовалют по top_n самых дорогих
     if filtered_key == "top":
 
-        filtered_rates = {(curr_code_union(k.replace("_"+base_val_code.code, ""),
+        filtered_rates = [{"code_pairs":curr_code_union(
+                                           curr_pair_get_code(
+                                                curr_pair = k,
+                                                left = True),
                                            convert_code),
-                           convert_currency(
-                               curr_code_base = k.replace("_"+base_val_code.code, ""),
+                           "rates": convert_currency(
+                               curr_code_base = curr_pair_get_code(
+                                                curr_pair = k,
+                                                left = True),
                                curr_code_convert = convert_code),
 
-                          v.get("updated_at")
-                           )
+                          "updated_at":v.get("updated_at")
+                           }
                           for k, v in pairs.items()
-                          if k.replace("_"+base_val_code.code, "")
-                          in ParserConfig.CRYPTO_CURRENCIES}
+                          if curr_pair_get_code(
+                                curr_pair = k,
+                                left = True)
+                          in ParserConfig.CRYPTO_CURRENCIES]
         # Сортировка по курсу с ограничением по top_n
-        sorted_rates = sorted(filtered_rates,
-                              key=lambda x: x[1],
-                              reverse=True)[:top_n]
+        sorted_rates = sorted(
+            filtered_rates,
+            key = lambda x: x["rates"],
+            reverse = True
+        )[:top_n]
 
         return sorted_rates
 
 
     # если фильтры не указаны возвращаем все
-    converted_rates = [(curr_code_union(
-                                k.replace("_"+base_val_code.code, ""),
+    converted_rates = [{"code_pairs":curr_code_union(
+                                curr_pair_get_code(
+                                    curr_pair = k,
+                                    left = True),
                                 convert_code),
-                        convert_currency(
-                                curr_code_base=k.replace(
-                                    "_"+base_val_code.code, ""),
-                                curr_code_convert=convert_code),
-                        v.get("updated_at")
-                        )
+                        "rates": convert_currency(
+                                curr_code_base = curr_pair_get_code(
+                                    curr_pair = k,
+                                    left = True),
+                                curr_code_convert = convert_code),
+                        "updated_at":v.get("updated_at")
+                        }
                       for k, v in pairs.items()]
     # Сортировка по алфавиту
-    sorted_rates = sorted(converted_rates,
-                          key=lambda x: x[0],
-                          reverse=False)
+    sorted_rates = sorted(
+            converted_rates,
+            key = lambda x: x["code_pairs"],
+            reverse = False
+        )
 
     # Меняем курс выбранной валютной базы к себе самой
     # на курс системно базовой валюты к выбранной валюте
-    base_correction = []
-    for num, it in enumerate(sorted_rates):
-        split_rate = it[0].split("_")
-        if split_rate[0] == split_rate[1]:
-            base_correction.append(curr_code_union(
-                                        base_val_code.code,
-                                        split_rate[0]))
-            base_correction.append(convert_currency(
-                curr_code_base = base_val_code.code,
-                curr_code_convert = split_rate[0]
-            ))
-            base_correction.append(it[2])
-            sorted_rates[num] = tuple(base_correction)
+    for sr in sorted_rates:
+        left_code = curr_pair_get_code(
+            curr_pair=sr["code_pairs"],
+            left = True)
+        right_code = curr_pair_get_code(
+            curr_pair = sr["code_pairs"],
+            left = False)
+        if left_code == right_code:
+            sr["code_pairs"] = curr_code_union(
+                base_val_code,
+                left_code
+            )
+            sr["rates"] = convert_currency(
+                curr_code_base=base_val_code,
+                curr_code_convert=left_code
+            )
+
     return sorted_rates
 
 

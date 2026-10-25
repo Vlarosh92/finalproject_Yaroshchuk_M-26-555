@@ -1,5 +1,5 @@
 import shlex
-from typing import Any, Callable, Dict, List
+from typing import Callable
 
 from prettytable import PrettyTable
 
@@ -10,10 +10,8 @@ from valutatrade_hub.core.exceptions import (
     SpaceConsoleParserException,
     SymbolConsoleParserException,
     UnknownCommandConsoleParserException,
-    ValidationException,
 )
 from valutatrade_hub.core.usecases import (
-    build_rates_updater,
     buy,
     change_password,
     get_rate,
@@ -23,11 +21,12 @@ from valutatrade_hub.core.usecases import (
     sell,
     show_rates_fun,
 )
-from valutatrade_hub.core.utils import dynamic_round
+from valutatrade_hub.core.utils import format_rate_for_output
 from valutatrade_hub.decorators import handle_errors, session_check, validate_command
 from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.logging_config import enable_console_logging, setup_logger
 from valutatrade_hub.parser_service.shceduler import Scheduler
+from valutatrade_hub.parser_service.updater import RatesUpdater
 
 # ==================================================================================
 # Основная функция модуля
@@ -42,12 +41,13 @@ def run() -> None:
     if not commands_signature:
         print("config.json не найден или повреждён.")
         return None
-    scheduler = Scheduler(interval_seconds=sl.get("rates_ttl_seconds"))
+    scheduler = Scheduler(interval_seconds=sl.get(key = "rates_ttl_seconds"))
     # настройка логгера
     session_manager = SessionManager()
-    setup_logger(log_dir = sl.get(key='log_path'),
-                 log_file_name = sl.get(key='log_file_name'),
-                 name = sl.get(key='logger_name'))
+    setup_logger(log_dir = sl.get(key = 'log_path'),
+                 log_file_name = sl.get(key = 'log_file_name'),
+                 time_config = sl.get(key = 'data_format_local'),
+                 name = sl.get(key = 'logger_name'))
     while True:
         user_input = input('>>> Введите команду: ')
         try:
@@ -99,21 +99,16 @@ class SessionManager:
                     user_name: str) -> str:
         """
         Открываем сессию после успешного login,
-        про повторной попытке входа, уточняет, желает ли пользователь перезайти
+        при повторном входе предупреждает о перезаходе
         """
         if self._session_id:
             if self._session_id == user_id:
                 return f"Вы уже зашли как '{self._user_name}'"
             else:
-                user_input = input(f"Вы уже зашли как '{self._user_name}', "
-                               f"вы уверены что хотите перезайти "
-                               f"как '{user_name}'? [y/n]:")
-                if user_input.strip() == 'y':
-                    self._session_id = user_id
-                    self._user_name = user_name
-                    return f"Вы вошли как '{self._user_name}'"
-                else:
-                    return "вход прерван"
+                old_name = self._user_name
+                self._session_id = user_id
+                self._user_name = user_name
+                return f"Вы перезашли с {old_name} на {user_name}"
         else:
             self._session_id = user_id
             self._user_name = user_name
@@ -141,7 +136,7 @@ class SessionManager:
 class FormattedOutput:
     """Класс для определения формата текстового вывода для разных команд"""
     @staticmethod
-    def show_rates_output_format(input_data: tuple) -> str:
+    def show_rates_output_format(input_data: list[dict]) -> str:
         """
         Формируем строку вывода для команды show-rates.
         В выводе используем pretty_table.
@@ -153,50 +148,39 @@ class FormattedOutput:
                                     "updated at"]
         pretty_table.align["Валюта"] = "l"
         pretty_table.align["Курс"] = "l"
-        pretty_table.align["updated at "] = "l"
+        pretty_table.align["updated at"] = "l"
         output_str = "Rates from cache:\n"
 
         for idata in input_data:
             pretty_table.add_row([
-                ("- " + idata[0]),
-                dynamic_round(value = idata[1], num_digits = 2),
-                f"{idata[2]}"
+                ("- " + idata.get("code_pairs")),
+                format_rate_for_output(value = idata.get("rates"),
+                              num_digits = 2),
+                f"{idata.get("updated_at")}"
                 ])
         output_str += pretty_table.get_string()
         return output_str
 
     @staticmethod
-    def register_output_format(_password: str = "",
-                               _user_name: str = "",
-                               _id: str = "") -> str:
+    def register_output_format(input_data: dict) -> str:
         """Формируем строку вывода для register"""
-        output_str = (f"Пользователь '{_user_name}' "
-                      f"зарегистрирован (id={_id}). "
-                      f"Войдите: login --username {_user_name}"
-                      f" --password {"".join("*" for _ in _password)}")
+        output_str = (f"Пользователь '{input_data.get("user_name")}' "
+                      f"зарегистрирован (id={input_data.get("id")}). "
+                      f"Войдите: login --username {input_data.get("user_name")}"
+                      f" --password {"".join("*" for _ in 
+                                             input_data.get("password"))}")
         return output_str + "\n"
 
     @staticmethod
-    def show_portfolio_output_format(
-            curr_code_list: list[str],
-            curr_value_list: list[float],
-            convertation_rate: list[float],
-
-            username: str = "",
-            base_code: str = "USD",
-            total_sum: float = 0,
-    ) -> str:
+    def show_portfolio_output_format(input_data: dict) -> str:
         """
         Формируем строку вывода для команды show-portfolio.
         В выводе используем pretty_table.
         """
-        if (len(curr_code_list) != len(curr_value_list)
-                or len(curr_code_list) != len(convertation_rate)):
-            raise ValidationException(message = "Ошибка соответствий данных")
 
         output_str = (f"Портфель пользователя "
-                      f"'{username}' "
-                      f"(база: {base_code}):\n")
+                      f"'{input_data.get("username")}' "
+                      f"(база: {input_data.get("code")}):\n")
 
         pretty_table = PrettyTable()
         # выравниваем таблицу
@@ -205,88 +189,114 @@ class FormattedOutput:
         pretty_table.align["Баланс"] = "l"
         pretty_table.align[" "] = "l"
         pretty_table.align["В базовой валюте"] = "r"
-        for num, ccl in enumerate(curr_code_list):
-            pretty_table.add_row([ccl,
-                                  str(dynamic_round(
-                                value = curr_value_list[num],
+        for ccl in input_data.get("portfolio_info"):
+            pretty_table.add_row([ccl.get("code"),
+                                  str(format_rate_for_output(
+                                value = ccl.get("value"),
                                 num_digits = 2)),
                                   str("-> "),
-                                  str(dynamic_round(
-                                value = curr_value_list[num]*
-                                        convertation_rate[num],
-                                num_digits = 2) + f" {base_code}")])
+                                  str(format_rate_for_output(
+                                value = ccl.get("convert"),
+                                num_digits = 2) + f" {input_data.get("code")}")])
 
         output_str += pretty_table.get_string() + "\n"
-        output_str += f"ИТОГО: {dynamic_round(
-                                value = total_sum,
-                                num_digits = 4)} {base_code}"
+        output_str += f"ИТОГО: {format_rate_for_output(
+                                value = input_data.get("total_sum"),
+                                num_digits = 4)} {input_data.get("code")}"
         return output_str
 
     @staticmethod
-    def buy_output_format(amount: str = "",
-                          currency: str = "",
-                          use_cases_ret: dict = None
-                          ) -> str:
+    def buy_output_format(input_data: dict) -> str:
         """Формируем строку вывода для команды buy"""
-        output_str = (f"Покупка выполнена: "
-                      f"{amount} {currency} "
-                      f"по курсу {dynamic_round(
-                                value = use_cases_ret.get("exchange_rate"), 
-                                num_digits = 2)} "
-                      f"{use_cases_ret.get('base_val_code')}/{currency}\n")
-        output_str += "Изменения в портфеле:\n"
-        output_str += (f"- {currency}: было {use_cases_ret.get("old_value")} → "
-                       f"стало {use_cases_ret.get("new_value")}\n")
-        output_str += (f"Оценочная стоимость покупки: "
-                       f"{dynamic_round(value = use_cases_ret.get(
-                           "base_curr_operation_value"),
-                                        num_digits = 2)} "
-                       f" {use_cases_ret.get('base_val_code')}")
+        uc_ret = input_data.get("use_cases_ret") or {}
 
+        amount = input_data.get("amount", 0)
+        currency = input_data.get("currency", "")
+        base_val_code = uc_ret.get("base_val_code", "")
+
+        exchange_rate = uc_ret.get("exchange_rate", 0.0)
+        old_value = uc_ret.get("old_value", 0.0)
+        new_value = uc_ret.get("new_value", 0.0)
+        base_curr_operation_value = uc_ret.get("base_curr_operation_value", 0.0)
+
+        output_str = (
+            f"Покупка выполнена: {amount} {currency} "
+            f"по курсу {
+            format_rate_for_output(value=exchange_rate, num_digits=2)} "
+            f"{base_val_code}/{currency}\n"
+        )
+        output_str += "Изменения в портфеле:\n"
+        output_str += (
+            f"- {currency}: было {
+            format_rate_for_output(value=old_value, num_digits=2)} → "
+            f"стало {
+            format_rate_for_output(value=new_value, num_digits=2)}\n"
+        )
+        output_str += (
+            f"Оценочная стоимость покупки: "
+            f"{format_rate_for_output(value=base_curr_operation_value, num_digits=2)} "
+            f"{base_val_code}"
+        )
         return output_str
 
     @staticmethod
-    def sell_output_format(amount: str = "",
-                           currency: str = "",
-                           use_cases_ret: dict = None
-                           ) -> str:
+    def sell_output_format(input_data: dict) -> str:
         """Формируем строку вывода для команды sell"""
-        output_str = (f"Продажа выполнена: "
-                      f"{amount} {currency} "
-                      f"по курсу {dynamic_round(
-                            value = use_cases_ret.get("exchange_rate"), 
-                            num_digits = 2)} "
-                      f"{use_cases_ret.get('base_val_code')}/{currency}\n")
+
+        uc_ret = input_data.get("use_cases_ret") or {}
+
+        amount = input_data.get("amount", 0)
+        currency = input_data.get("currency", "")
+        base_val_code = uc_ret.get("base_val_code", "")
+
+        exchange_rate = uc_ret.get("exchange_rate", 0.0)
+        old_value = uc_ret.get("old_value", 0.0)
+        new_value = uc_ret.get("new_value", 0.0)
+        base_curr_operation_value = uc_ret.get("base_curr_operation_value", 0.0)
+
+        output_str = (
+            f"Продажа выполнена: {amount} {currency} "
+            f"по курсу {
+            format_rate_for_output(value=exchange_rate, num_digits=2)} "
+            f"{base_val_code}/{currency}\n"
+        )
         output_str += "Изменения в портфеле:\n"
-        output_str += (f"- {currency}: было {use_cases_ret.get("old_value")} → "
-                       f"стало {use_cases_ret.get("new_value")}\n")
-        output_str += (f" Оценочная выручка: {dynamic_round(
-                            value = use_cases_ret.get("base_curr_operation_value"),
-                            num_digits = 2
-                            )}"
-                       f" {use_cases_ret.get('base_val_code')}")
-
+        output_str += (
+            f"- {currency}: было {
+            format_rate_for_output(value=old_value, num_digits=2)} → "
+            f"стало {
+            format_rate_for_output(value=new_value, num_digits=2)}\n"
+        )
+        output_str += (
+            f"Оценочная выручка: "
+            f"{format_rate_for_output(value=base_curr_operation_value, num_digits=2)} "
+            f"{base_val_code}"
+        )
 
         return output_str
 
     @staticmethod
-    def get_rate_output_format(curr_from: str = "",
-                               curr_to: str = "",
-                               exc_rate: float = 1,
-                               last_refresh: str = ""
-                               ) -> str:
+    def get_rate_output_format(input_data: dict) -> str:
         """Формируем строку вывода для команды get-rate"""
-        output_str = (f"Курс {curr_from}→{curr_to}: {dynamic_round(
-                                                            value = exc_rate, 
-                                                            num_digits = 2)}"
-                      f" (обновлено: {last_refresh})\n")
-        output_str += f"Обратный курс {curr_to}→{curr_from}: {dynamic_round(
-                                                            value = (1 / exc_rate), 
-                                                            num_digits = 2)}"
+        curr_from = input_data["curr_from"]
+        curr_to = input_data["curr_to"]
+        exc_rate = input_data.get("convert_rate", 0.0)
+        reverse_rate = input_data.get("reverse_rate", 0.0)
+        last_refresh = input_data.get("last_refresh", "-")
+
+        output_str = (
+            f"Курс {curr_from}→{curr_to}: "
+            f"{format_rate_for_output(value=exc_rate, num_digits=2)} "
+            f"(обновлено: {last_refresh})\n"
+        )
+        output_str += (
+            f"Обратный курс {curr_to}→{curr_from}: "
+            f"{format_rate_for_output(value=reverse_rate, num_digits=2)}"
+        )
         return output_str
 
     @staticmethod
-    def help_output_format(command_signature: dict[str, dict[Any, Any] ]) -> str:
+    def help_output_format(command_signature: dict) -> str:
         """Формирования строки для команды help"""
         # Находим длину самой длинной команды, чтобы выровнять колонку
         max_cmd_len = max(len(cmd) for cmd in command_signature.keys())
@@ -305,7 +315,7 @@ class FormattedOutput:
 # Парсер ввода с консоли
 # ==================================================================================
 def parse_input_str(command_name: str,
-                    command_args: List[str]) -> Dict:
+                    command_args: list[str]) -> dict:
     """
     Функция парсит входящую строку и разбивает на словарь
     состоящий из ключа(ключевого слова) и значения
@@ -380,9 +390,9 @@ def cli_register_fun(**k_cli) -> str:
     _password = k_cli.get('--password')
     acc_id = register_new_account(_user_name, _password).get("result")
 
-    return FormattedOutput().register_output_format(_user_name = _user_name,
-                               _password = _password,
-                               _id = str(acc_id))
+    return FormattedOutput().register_output_format({"user_name": _user_name,
+                               "password": _password,
+                               "id": str(acc_id)})
 
 @handle_errors
 @validate_command("login")
@@ -395,6 +405,7 @@ def cli_login_fun(**k_cli) -> str:
     _user_name = k_cli.get('--username')
     _password = k_cli.get('--password')
     user_id = login_account(_user_name, _password).get("result")
+
     return session_manager.open_session(user_id=user_id,
                                        user_name=_user_name)
 
@@ -408,13 +419,16 @@ def cli_show_portfolio_fun(**k_cli) -> str:
     опционально переводит в выбранную валюту
     """
     session_manager = k_cli.get('_session')
-    base_code = k_cli.get('--base') or sl.get(key="base_currency")
-    base_code = get_currency(code = base_code)
+    b_code = k_cli.get('--base') or sl.get(key = "base_currency")
+    base_code = get_currency(code = b_code,
+                             curr_data = sl
+                                .get(key = "currencies")
+                                .get(b_code))
     portfolio_fun_data = portfolio_fun(
                                 user_id= session_manager.session_id,
                                 curr_base_code = base_code.code
                                 )
-    return FormattedOutput().show_portfolio_output_format(*portfolio_fun_data)
+    return FormattedOutput().show_portfolio_output_format(portfolio_fun_data)
 
 @handle_errors
 @session_check
@@ -423,15 +437,19 @@ def cli_buy_fun(**k_cli) -> str:
     """Функция обработки команды на покупку"""
     session_manager = k_cli.get('_session')
     _amount = k_cli['--amount']
-    _currency = get_currency(code = k_cli.get('--currency'))
+    _currency = get_currency(code = k_cli.get('--currency'),
+                             curr_data = sl
+                                .get(key = "currencies")
+                                .get(k_cli.get('--currency'))
+                             )
     use_case_ret = buy(user_id = session_manager.session_id,
                        curr_code = _currency.code,
                        amount = _amount)
-    return FormattedOutput().buy_output_format(
-                      amount = _amount,
-                      currency = _currency.code,
-                      use_cases_ret = use_case_ret
-                      )
+    return FormattedOutput().buy_output_format({
+                        "amount": _amount,
+                        "currency": _currency.code,
+                        "use_cases_ret": use_case_ret}
+                        )
 
 @handle_errors
 @session_check
@@ -440,30 +458,43 @@ def cli_sell_fun(**k_cli) ->str:
     """Функция обработки команды на продажу"""
     session_manager = k_cli.get('_session')
     _amount = k_cli['--amount']
-    _currency = get_currency(code=k_cli.get('--currency'))
+    _currency = get_currency(code = k_cli.get('--currency'),
+                             curr_data = sl
+                                .get(key = "currencies")
+                                .get(k_cli.get('--currency')))
     use_case_ret = sell(user_id=session_manager.session_id,
                        curr_code=_currency.code,
                        amount=_amount)
-    return FormattedOutput().sell_output_format(
-        amount=_amount,
-        currency=_currency.code,
-        use_cases_ret=use_case_ret
-    )
+    return FormattedOutput().sell_output_format({
+                        "amount": _amount,
+                        "currency": _currency.code,
+                        "use_cases_ret": use_case_ret}
+                        )
 
 @handle_errors
 @validate_command("get-rate")
 def cli_get_rates(**k_cli) -> str:
     """Функция обработки команды на показ курса валют"""
-    curr_from = get_currency(code=k_cli.get('--from'))
-    curr_to = get_currency(code=k_cli.get('--to'))
-    exc_rate, last_refresh = get_rate(
-             curr_from = curr_from.code,
-             curr_to = curr_to.code)
-    return FormattedOutput().get_rate_output_format(
+    curr_from = get_currency(code = k_cli.get('--from'),
+                             curr_data = sl
+                                .get(key = "currencies")
+                                .get(k_cli.get('--from')))
+    curr_to = get_currency(code = k_cli.get('--to'),
+                             curr_data = sl
+                                .get(key = "currencies")
+                                .get(k_cli.get('--to')))
+    updater = RatesUpdater.build()
+    use_case_ret = get_rate(
              curr_from = curr_from.code,
              curr_to = curr_to.code,
-             exc_rate = exc_rate,
-             last_refresh = last_refresh)
+             updater = updater)
+    return FormattedOutput().get_rate_output_format({
+                        "curr_from": curr_from.code,
+                        "curr_to": curr_to.code,
+                        "reverse_rate": use_case_ret.get("reverse_rate"),
+                        "convert_rate": use_case_ret.get("convert_rate"),
+                        "last_refresh": use_case_ret.get("last_refresh")}
+                        )
 
 @handle_errors
 @validate_command("show-rates")
@@ -474,11 +505,21 @@ def cli_show_rates(**k_cli) -> str:
     указанную в --currency, опционально показываем
     в валюте указанной в --base
     """
-    converted_code = get_currency(code = sl.get(key="base_currency"))
+    converted_code = get_currency(code = sl.get(key = "base_currency"),
+                             curr_data = sl
+                                .get(key = "currencies")
+                                .get(sl.get(key = "base_currency")))
+
     if k_cli.get("--base"):
-        converted_code = get_currency(code = k_cli["--base"])
+        converted_code = get_currency(code = k_cli["--base"],
+                             curr_data = sl
+                                .get(key = "currencies")
+                                .get(k_cli["--base"]))
     if k_cli.get("--currency"):
-        _curr_code = get_currency(code = k_cli["--currency"])
+        _curr_code = get_currency(code = k_cli["--currency"],
+                             curr_data = sl
+                                .get(key = "currencies")
+                                .get(k_cli["--currency"]))
         result = show_rates_fun(filtered_key = "currency",
                                 curr_code = _curr_code.code,
                                 convert_code = converted_code.code)
@@ -486,9 +527,9 @@ def cli_show_rates(**k_cli) -> str:
 
         result = show_rates_fun(filtered_key="top",
                                 top_n = k_cli["--top"],
-                                convert_code=converted_code.code)
+                                convert_code = converted_code.code)
     else:
-        result = show_rates_fun(convert_code=converted_code.code)
+        result = show_rates_fun(convert_code = converted_code.code)
 
 
     return FormattedOutput().show_rates_output_format(result)
@@ -500,11 +541,11 @@ def cli_update_rates(**k_cli) -> str:
     Вызов функции обновления курсов валют
     опционально из одного источника --source
     """
-    updater = build_rates_updater(source = k_cli.get("--source"))
-
+    updater = RatesUpdater.build(source = k_cli.get("--source"))
     # Логгер временно пишет в консоль только внутри with.
     # После выхода handler удаляется, логи идут только в файл.
-    with enable_console_logging("logger_1"):
+    with enable_console_logging(logger_name = "logger_1",
+                                time_config = sl.get(key = 'data_format_local')):
         return updater.run_update()
 
 @handle_errors
@@ -520,7 +561,7 @@ def cli_change_password(**k_cli) -> str:
 def cli_scheduler_run(**k_cli) -> str:
     """Запуск фонового обновления валют"""
 
-    updater = build_rates_updater(source=k_cli.get("--source"))
+    updater = RatesUpdater.build()
     scheduler = k_cli.get("_scheduler")
     scheduler.updater = updater.run_update
     scheduler.start()

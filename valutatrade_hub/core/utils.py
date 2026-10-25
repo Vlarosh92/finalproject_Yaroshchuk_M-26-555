@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from hashlib import pbkdf2_hmac
 from pathlib import Path
 
+from valutatrade_hub.core.exceptions import ValidationException
+
 
 def status_code_api_err(status_code: int) -> str:
     """
@@ -25,7 +27,7 @@ def status_code_api_err(status_code: int) -> str:
         mess = f"Сервер временно недоступен (код {status_code})"
     return mess
 
-def dynamic_round(value: float,
+def format_rate_for_output(value: float,
                   num_digits: int = 2) -> str:
     """
     Динамическое форматирование числа для
@@ -50,28 +52,30 @@ def dynamic_round(value: float,
     return cleaned
 
 
-def str_to_datatime(ts: str) -> datetime:
+def str_to_datatime(tmp_formats: list,
+                    ts: str) -> datetime:
     """Перевод строки в формат datatime"""
-    time_fmt = [
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M:%SZ",
-    ]
     ts = ts.strip()
-    for t_fmt in time_fmt:
+    for t_fmt in tmp_formats:
         try:
             return datetime.strptime(ts, t_fmt)
         except (ValueError, TypeError):
             continue
-    raise Exception()
+    raise ValidationException(
+        f"Неверный формат даты. Ожидался один из: {', '.join(tmp_formats)}. "
+        f"Получено: '{ts}'"
+    )
 
-def data_time_comprehension(time_str_1: str,
-                            time_str_2: str = None) -> int:
+def data_time_comprehension(tmp_formats: list,
+                            time_str_1: str,
+                            time_str_2: str = None,
+                            ) -> int:
     """Функция сравнения дат по времени. Возвращает разницу в секундах"""
     # Если второй аргумент не передан, берем текущее время по utc
     if time_str_2 is None:
-        time_str_2 = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    dt1 = str_to_datatime(time_str_1)
-    dt2 = str_to_datatime(time_str_2)
+        time_str_2 = datetime.now(timezone.utc).strftime(tmp_formats[1])
+    dt1 = str_to_datatime(ts = time_str_1, tmp_formats = tmp_formats)
+    dt2 = str_to_datatime(ts = time_str_2, tmp_formats = tmp_formats)
 
     delta = dt2 - dt1
     return int(delta.total_seconds())
@@ -79,6 +83,7 @@ def data_time_comprehension(time_str_1: str,
 def apply_rate(input_value: float,
                           exchange_rate: float) -> float:
     return input_value * exchange_rate
+
 def curr_code_union(curr_1: str,
                     curr_2: str
                     ) -> str:
@@ -87,22 +92,20 @@ def curr_code_union(curr_1: str,
     """
     return f"{curr_1}_{curr_2}"
 
+def curr_pair_get_code(curr_pair: str,
+                       left: bool = True) -> str:
+    """
+    Функция для возврата конкретного кода из пары
+    True - левый код
+    False - правый код
+    """
+    return curr_pair.split("_")[0] if left else curr_pair.split("_")[1]
+
 def root_path() -> Path:
     """
     получаем корневую директорию
     """
     return Path(__file__).resolve().parent.parent.parent
-
-def root_data_path() -> Path:
-    """
-    устанавливаем директорию хранения данных
-    создаем если не существует
-    """
-    data_dir = "data"
-    data_dir = root_path() / data_dir
-    data_dir.mkdir(exist_ok=True)
-    return data_dir
-
 
 def password_creator(password: str) -> tuple:
     """
@@ -144,8 +147,5 @@ def password_check(password_hash: str,
         salt,
         10000
     )
-    if password_hash == hash_pass.hex():
-        return True
-    else:
-        return False
+    return password_hash == hash_pass.hex()
 

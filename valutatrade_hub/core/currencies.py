@@ -68,19 +68,24 @@ class CryptoCurrency(Currency):
                 f"(Algo: {self.algorithm}, MCAP: {self.market_cap})")
 
 
-currency_factory = {
-        "RUB": lambda: FiatCurrency("Russian rubble", "RUB", "Russian Federation"),
-        "USD": lambda: FiatCurrency("US Dollar", "USD", "United States"),
-        "EUR": lambda: FiatCurrency("EURO", "EUR", "Euro Zone"),
-        "BTC": lambda: CryptoCurrency("Bitcoin", "BTC", "SHA-256", 1.7 * (10 ** 12)),
-        "ETH": lambda: CryptoCurrency("Ethereum", "ETH", "Ethash", 3.1 * (10 ** 11)),
-    }
-def get_currency(code: str) -> Currency:
+def get_currency(code: str,
+                 curr_data: dict) -> Currency:
     """
     Функция-фабрика лениво создающая
-    экземпляр класса по словарю
+    экземпляр класса по словарю из config.json
     """
-    factory = currency_factory.get(code)
-    if factory is None:
+
+    if curr_data.get("type") == "fiat":
+        return FiatCurrency(name = curr_data.get("name"),
+                            code = code,
+                            issuing_country = curr_data
+                            .get("issuing_country"))
+    elif curr_data.get("type") == "crypto":
+        return CryptoCurrency(name = curr_data.get("name"),
+                            code = code,
+                            algorithm = curr_data
+                                .get("algorithm"),
+                            market_cap = curr_data
+                                .get("market_cap"))
+    else:
         raise CurrencyNotFoundError(field = code)
-    return factory()

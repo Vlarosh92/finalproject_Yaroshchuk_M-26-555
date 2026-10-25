@@ -11,7 +11,7 @@ class ParserConfig:
     Файл конфигурации интернет парсера.
     """
     # читаем ключ из переменной окружения
-    EXCHANGERATE_API_KEY: str = os.getenv("EXCHANGERATE_API_KEY")
+    EXCHANGERATE_API_KEY = os.getenv("EXCHANGERATE_API_KEY")
     if EXCHANGERATE_API_KEY is None:
         # как альтернатива читаем ключ из файла .env
         # добавленного в .gitignore
@@ -25,14 +25,17 @@ class ParserConfig:
                         key, value = line.split("=", 1)
                         EXCHANGERATE_API_KEY = value.strip()
 
-    COINGECKO_URL: str = "https://api.coingecko.com/api/v3/simple/price"
-    EXCHANGERATE_API_URL: str = "https://v6.exchangerate-api.com/v6"
+    COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
+    EXCHANGERATE_API_URL = "https://v6.exchangerate-api.com/v6"
 
     # Списки валют
     sl = SettingsLoader()
-    BASE_CURRENCY: str = sl.get(key = "base_currency")
-    FIAT_CURRENCIES: tuple = ("EUR", "RUB")
-    CRYPTO_CURRENCIES: tuple = ("BTC", "ETH")
+    BASE_CURRENCY = sl.get(key = "base_currency")
+    DATA_FORMATS = [
+            sl.get("data_format_local"),
+            sl.get("data_format_utc")]
+    FIAT_CURRENCIES = ("EUR", "RUB")
+    CRYPTO_CURRENCIES = ("BTC", "ETH")
     CRYPTO_ID_MAP = {
         "BTC": "bitcoin",
         "ETH": "ethereum"
@@ -43,8 +46,8 @@ class ParserConfig:
     }
 
     # Пути
-    RATES_FILE_PATH: str = "data/rates.json"
-    HISTORY_FILE_PATH: str = "data/exchange_rates.json"
+    RATES_FILE_PATH = "data/rates.json"
+    HISTORY_FILE_PATH = "data/exchange_rates.json"
 
     # Сетевые параметры
-    REQUEST_TIMEOUT: int = 10
+    REQUEST_TIMEOUT = 10

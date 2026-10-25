@@ -9,6 +9,7 @@ from valutatrade_hub.core.utils import root_path
 def setup_logger(log_dir: str,
                  log_file_name: str = "app.log",
                  name: str = "logger_1",
+                 time_config: str = "%Y-%m-%dT%H:%M:%S",
                  debug_mode: bool = False) -> logging.Logger | None:
     """
     Функция для настройки логгера.
@@ -20,11 +21,11 @@ def setup_logger(log_dir: str,
 
     full_log_dir = root_path() / log_dir
 
-    os.makedirs(full_log_dir, exist_ok=True)
+    os.makedirs(full_log_dir, exist_ok = True)
     # формат записи лога
     log_format = logging.Formatter(
         "%(levelname)-8s %(asctime)s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S"
+        datefmt = time_config
     )
 
 
@@ -39,8 +40,8 @@ def setup_logger(log_dir: str,
     # проводим ротацию файлов (до 3) при достижении размера до 1 Мб
     file_handler = RotatingFileHandler(
         os.path.join(full_log_dir, log_file_name),
-        maxBytes=1000000,
-        backupCount=3
+        maxBytes = 1000000,
+        backupCount = 3
     )
     # обработчик для вывода в файл
     file_handler.setLevel(level)
@@ -53,7 +54,8 @@ def setup_logger(log_dir: str,
 
 
 @contextmanager
-def enable_console_logging(logger_name: str = "logger_1"):
+def enable_console_logging(logger_name: str = "logger_1",
+                           time_config: str = "%Y-%m-%dT%H:%M:%S"):
     """
     Временно добавляет вывод в консоль для указанного логгера.
     После выхода из контекста консоль отключается.
@@ -65,7 +67,7 @@ def enable_console_logging(logger_name: str = "logger_1"):
 
     log_format = logging.Formatter(
         "%(levelname)-8s %(asctime)s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S"
+        datefmt=time_config
     )
 
     console_handler.setFormatter(log_format)

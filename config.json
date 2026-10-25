@@ -7,6 +7,9 @@
   "logger_name": "logger_1",
   "supported_currency": ["USD", "EUR", "BTC", "RUB","ETH"],
 
+  "data_format_local": "%Y-%m-%dT%H:%M:%S",
+  "data_format_utc": "%Y-%m-%dT%H:%M:%SZ",
+
   "allowed_chars" : "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-!@#*",
   "commands_signature" : {
         "exit": {},
@@ -44,5 +47,34 @@
         "change-password": {
             "--password": {"exist": true, "min_len": 4, "type": "str"}},
         "scheduler-run": {}
+      },
+  "currencies": {
+      "RUB": {
+          "type": "fiat",
+          "name": "Russian rubble",
+          "issuing_country": "Russian Federation"
+      },
+      "USD": {
+          "type": "fiat",
+          "name": "US Dollar",
+          "issuing_country": "United States"
+      },
+      "EUR": {
+          "type": "fiat",
+          "name": "EURO",
+          "issuing_country": "Euro Zone"
+      },
+      "BTC": {
+          "type": "crypto",
+          "name": "Bitcoin",
+          "algorithm": "SHA-256",
+          "market_cap": 1700000000000
+      },
+      "ETH": {
+          "type": "crypto",
+          "name": "Ethereum",
+          "algorithm": "Ethash",
+          "market_cap": 310000000000
       }
+  }
 }

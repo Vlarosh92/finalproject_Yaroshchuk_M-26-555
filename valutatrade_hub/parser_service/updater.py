@@ -1,17 +1,41 @@
 import logging
 from datetime import datetime, timezone
 
-from valutatrade_hub.core.exceptions import ApiRequestError, DataBaseException
+from valutatrade_hub.core.exceptions import (
+    ApiClientsError,
+    ApiRequestError,
+    DataBaseException,
+)
 from valutatrade_hub.core.utils import data_time_comprehension
 from valutatrade_hub.infra.database import DataBaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
-from valutatrade_hub.parser_service.api_clients import BaseApiClient
+from valutatrade_hub.parser_service.api_clients import (
+    BaseApiClient,
+    CoinGeckoClient,
+    ExchangeRateApiClient,
+)
 from valutatrade_hub.parser_service.storage import ApiStorageClass
 
 logger = logging.getLogger(SettingsLoader().get(key='logger_name'))
 
 
 class RatesUpdater:
+    @classmethod
+    def build(cls, source: str | None = None):
+        """
+        Фабричный метод создания RatesUpdater для
+        заданного источника source
+        """
+        db = DataBaseManager()
+        api_storage = ApiStorageClass(db=db)
+
+        clients = [CoinGeckoClient(), ExchangeRateApiClient()]
+        if source is not None:
+            clients = [c for c in clients if c.source == source]
+            if not clients:
+                raise ApiClientsError(field=source)
+
+        return cls(api_clients=clients, storage_class=api_storage)
     """Класс обновления валютных пар"""
     def __init__(self,
                  api_clients: list[BaseApiClient],
@@ -19,6 +43,9 @@ class RatesUpdater:
                  ) -> None:
         self._api_clients = api_clients
         self._storage_class = storage_class
+        self._tmp_formats = [
+            SettingsLoader().get("data_format_local"),
+            SettingsLoader().get("data_format_utc")]
 
     def run_update(self) -> str:
         """Запуск обновления"""
@@ -37,7 +64,7 @@ class RatesUpdater:
                 # так как в формате указываем Z время UTC + 0
                 actual_time = (datetime.
                                now(timezone.utc).
-                               strftime("%Y-%m-%dT%H:%M:%SZ"))
+                               strftime(self._tmp_formats[1]))
                 # обрабатываем
                 for k, co in client_output.items():
 
@@ -69,7 +96,11 @@ class RatesUpdater:
                     rate_time = (DataBaseManager().
                                  get_rates(code = curr).
                                  get("updated_at"))
-                    if data_time_comprehension(time, rate_time)>0:
+
+                    if data_time_comprehension(
+                            tmp_formats = self._tmp_formats,
+                            time_str_1 = time,
+                            time_str_2 = rate_time)>0:
                         raise ApiRequestError(
                             message="Некорректное время обновления, "
                                     "записи из базы данных не старее "
@@ -108,13 +139,13 @@ class RatesUpdater:
         # формируем данные для среза
         actual_time = (datetime.
                        now(timezone.utc).
-                       strftime("%Y-%m-%dT%H:%M:%SZ"))
+                       strftime(self._tmp_formats[1]))
         output_rate_dict = {
             "pairs": {k: v for d in new_rate_data for k, v in d.items()},
             "last_refresh": actual_time
         }
         # так как в формате не указываем Z время местное
-        refresh_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        refresh_time = datetime.now().strftime(self._tmp_formats[0])
 
         if total_rates==0:
             logger.error("ERROR: Failed all updated.")

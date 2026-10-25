@@ -10,7 +10,6 @@ from valutatrade_hub.core.exceptions import (
 )
 from valutatrade_hub.core.utils import curr_code_union, password_changer, password_check
 from valutatrade_hub.decorators import check_len, positive_check
-from valutatrade_hub.infra.settings import SettingsLoader
 
 
 class Users:
@@ -37,8 +36,7 @@ class Users:
         # Соль не добавляем так как это часть пароля
         return {"user_id": self._user_id,
                 "username": self._username,
-                "registration_date": self._registration_date.strftime(
-                    "%Y-%m-%dT%H:%M:%S")}
+                "registration_date": self._registration_date}
 
     @check_len(field_name = 'new_password', meth_name = "Пароль", min_len = 4)
     def change_password(self,
@@ -87,12 +85,12 @@ class Users:
         if value.strip():
             self._username = value
         else:
-            ExistValidationException(field="username")
+            raise ExistValidationException(field="username")
     @registration_date.setter
     def registration_date(self, reg_data: datetime):
         """установка даты регистрации пользователя"""
         if not isinstance(reg_data, datetime):
-            TypeValidationException(field = "datetime")
+            raise TypeValidationException(field = "datetime")
         self._registration_date = reg_data
 
 
@@ -176,27 +174,27 @@ class Portfolio:
 
     def get_total_value(self,
                         base_currency: str = "USD",
-                        rates_pairs: dict = None) -> float:
+                        settings_base_curr: str = "USD",
+                        rates: dict = None) -> float:
         """
         Функция возращает сумму по всем кошелькам
-        переведенную в выбранную валюту
+        переведенную в выбранную валюту,
+        принимает словарь курсов (rates) с
+        ключом по валютной паре
         """
-        if rates_pairs is None:
+        if rates is None:
             return 0
-        settings_base_curr = SettingsLoader().get(key="base_currency")
         tot_sum = 0
         for k, w in self.wallets.items():
             if k == settings_base_curr:
                 tot_sum += w.balance
             else:
-                tot_sum += w.balance * (rates_pairs['pairs']
-                [curr_code_union(k, settings_base_curr)]
-                ["rate"])
+                tot_sum += w.balance * (rates.
+                        get(curr_code_union(k, settings_base_curr)))
         # переводим в выбранную базовою валюту
         if base_currency != settings_base_curr:
-            tot_sum /= (rates_pairs['pairs']
-                [curr_code_union(base_currency, settings_base_curr)]
-                ["rate"])
+            tot_sum /= (rates.
+                        get(curr_code_union(base_currency, settings_base_curr)))
         return tot_sum
     def get_wallet(self, currency_code: str) -> Wallet:
         """
