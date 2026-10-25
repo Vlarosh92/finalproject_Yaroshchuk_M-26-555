@@ -253,6 +253,9 @@ def get_rate(curr_from: str,
         try:
             updater.run_update()
             last_refresh = exc_rates.get('last_refresh')
+            # очищаем кеш
+            portfolio_fun.clear()
+            show_rates_fun.clear()
         except ApiRequestError as e:
             raise e
 

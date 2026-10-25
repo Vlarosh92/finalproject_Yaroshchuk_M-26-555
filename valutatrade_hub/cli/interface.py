@@ -546,6 +546,8 @@ def cli_update_rates(**k_cli) -> str:
     # После выхода handler удаляется, логи идут только в файл.
     with enable_console_logging(logger_name = "logger_1",
                                 time_config = sl.get(key = 'data_format_local')):
+        # очищаем кеш
+        show_rates_fun.clear()
         return updater.run_update()
 
 @handle_errors

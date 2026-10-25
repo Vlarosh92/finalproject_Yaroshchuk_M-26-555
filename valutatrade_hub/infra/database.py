@@ -6,7 +6,11 @@ from datetime import datetime
 from pathlib import Path
 
 from valutatrade_hub.core.exceptions import FileLoadException, FileSaveException
-from valutatrade_hub.core.utils import curr_code_union, root_path, str_to_datatime
+from valutatrade_hub.core.utils import (
+    curr_code_union,
+    root_path,
+    str_to_datatime,
+)
 from valutatrade_hub.infra.settings import SettingsLoader
 
 
@@ -131,7 +135,6 @@ class DataBaseManager:
                                 input_data=input_rates)
         # обновляем кеш при записи новых данных
         self._dict_rates = {}
-
     def save_data_in_journal(self, new_data: list) -> None:
         """Сохраняем данные в журнал exchange_rate.json"""
         self._upsert_list(file_name='exchange_rates',
@@ -174,7 +177,6 @@ class DataBaseManager:
                           input_data=new_data)
         # обновляем кеш при записи новых данных
         self._dict_portfolios = {}
-
     # Методы работы с данными и файловой системой______________________________
     def _upsert_list(self, input_data: dict | list,
                      file_name: str) -> None:
